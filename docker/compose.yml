@@ -1,0 +1,107 @@
+version: "3.9"
+services:
+  solana:
+    image: solanalabs/solana:v1.18.15
+    command: solana-test-validator -r --ledger /ledger --wal-recovery-mode skip_any_corrupted_record
+    ports:
+      - "8899:8899"
+      - "8900:8900"
+    volumes:
+      - ../ledger:/ledger
+    healthcheck:
+      test: ["CMD", "bash", "-lc", "curl -s http://localhost:8899 || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  postgres:
+    image: postgres:15
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: zksl
+    ports:
+      - "5432:5432"
+    volumes:
+      - ../pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD", "pg_isready", "-U", "postgres"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  redis:
+    image: redis:7.2
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  orchestrator:
+    build:
+      context: ../orchestrator
+      dockerfile: Dockerfile
+    environment:
+      - PORT=8080
+      - RPC_URL=http://solana:8899
+      - WS_URL=ws://solana:8900
+      - DATABASE_URL=postgres://postgres:postgres@postgres:5432/zksl
+      - REDIS_URL=redis://redis:6379
+    ports:
+      - "8080:8080"
+    depends_on:
+      - solana
+      - postgres
+      - redis
+    healthcheck:
+      test: ["CMD", "bash", "-lc", "curl -sf http://localhost:8080/health | grep -q ok"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  prover:
+    build:
+      context: ../prover
+      dockerfile: Dockerfile
+    environment:
+      - RPC_URL=http://solana:8899
+      - ARTIFACT_DIR=/artifacts
+    volumes:
+      - ../data/artifacts:/artifacts
+    depends_on:
+      - solana
+
+  indexer:
+    build:
+      context: ../indexer
+    environment:
+      - RPC_URL=http://solana:8899
+      - WS_URL=ws://solana:8900
+      - DATABASE_URL=postgres://postgres:postgres@postgres:5432/zksl
+      - REDIS_URL=redis://redis:6379
+    depends_on:
+      - solana
+      - postgres
+
+  prometheus:
+    image: prom/prometheus:v2.49.0
+    ports:
+      - "9090:9090"
+    depends_on:
+      - orchestrator
+      - indexer
+
+  grafana:
+    image: grafana/grafana:10.4.3
+    ports:
+      - "3000:3000"
+    depends_on:
+      - prometheus
+
+networks:
+  default:
+    driver: bridge
+

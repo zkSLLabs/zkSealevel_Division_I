@@ -1,0 +1,13 @@
+{
+  "name": "zksl-root",
+  "private": true,
+  "scripts": {
+    "kat:ds": "node scripts/kats/ds_kat.js"
+  },
+  "dependencies": {
+    "blake3": "^2.1.9"
+  },
+  "engines": { "node": ">=20 <21" }
+}
+
+

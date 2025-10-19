@@ -1,0 +1,13 @@
+[workspace]
+members = [
+  "programs/validator_lock"
+]
+
+[provider]
+cluster = "Localnet"
+wallet = "~/.config/solana/id.json"
+
+[programs.localnet]
+validator_lock = "Val1dAt0rLock1111111111111111111111111111111"
+
+
