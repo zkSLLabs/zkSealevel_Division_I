@@ -38,7 +38,9 @@ jobs:
             target/idl/validator_lock.json
       
       - name: Deploy to devnet (if secrets present)
-        if: ${{ secrets.SOLANA_DEPLOYER_KEY != '' }}
+        if: env.SOLANA_DEPLOYER_KEY != ''
+        env:
+          SOLANA_DEPLOYER_KEY: ${{ secrets.SOLANA_DEPLOYER_KEY }}
         run: |
           echo "${{ secrets.SOLANA_DEPLOYER_KEY }}" > deployer.json
           solana config set --url https://api.devnet.solana.com
