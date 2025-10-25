@@ -18,7 +18,7 @@ jobs:
       - name: Install Solana CLI (GitHub tarball)
         run: |
           mkdir -p $HOME/solana
-          wget -O $HOME/solana/solana.tar.bz2 https://github.com/solana-labs/solana/releases/download/v1.18.26/solana-release-x86_64-unknown-linux-gnu.tar.bz2
+          wget -O $HOME/solana/solana.tar.bz2 https://github.com/solana-labs/solana/releases/download/v1.19.6/solana-release-x86_64-unknown-linux-gnu.tar.bz2
           mkdir -p $HOME/solana/release
           tar -xjf $HOME/solana/solana.tar.bz2 -C $HOME/solana/release
           echo "$HOME/solana/release/solana-release/bin" >> $GITHUB_PATH
@@ -58,7 +58,7 @@ jobs:
 
       - name: Build program (anchor)
         run: |
-          anchor build
+          anchor build -- --locked
 
       - name: Upload build artifacts
         uses: actions/upload-artifact@v4
