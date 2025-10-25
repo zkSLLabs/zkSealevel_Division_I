@@ -20,17 +20,15 @@ jobs:
           toolchain: 1.82.0
           override: true
       
-      - name: Install Anchor CLI via AVM
+      - name: Install Anchor CLI (direct)
         run: |
-          cargo install --git https://github.com/coral-xyz/anchor avm --locked --force
-          avm install 0.30.1
-          avm use 0.30.1
-          echo "$HOME/.avm/bin" >> $GITHUB_PATH
-          anchor --version
+          cargo install --git https://github.com/coral-xyz/anchor --tag v0.30.1 anchor-cli --locked --force
+          echo "$HOME/.cargo/bin" >> $GITHUB_PATH
+          ~/.cargo/bin/anchor --version
       
       - name: Build program
         run: |
-          anchor build
+          ~/.cargo/bin/anchor build
       
       - name: Upload build artifacts
         uses: actions/upload-artifact@v4
@@ -49,7 +47,7 @@ jobs:
           echo "${{ secrets.SOLANA_DEPLOYER_KEY }}" > deployer.json
           solana config set --url https://api.devnet.solana.com
           solana airdrop 2 -k deployer.json || true
-          anchor deploy --provider.cluster devnet --provider.wallet deployer.json
+          ~/.cargo/bin/anchor deploy --provider.cluster devnet --provider.wallet deployer.json
           PID=$(solana address -k target/deploy/validator_lock-keypair.json)
           echo "Program ID: $PID"
           solana program show "$PID"
