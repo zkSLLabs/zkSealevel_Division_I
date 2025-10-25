@@ -15,15 +15,15 @@ jobs:
           toolchain: 1.82.0
           override: true
 
-      - name: Install Solana CLI (GitHub tarball)
+      - name: Install Solana CLI (installer with fallback)
         run: |
-          mkdir -p $HOME/solana
-          wget -O $HOME/solana/solana.tar.bz2 https://github.com/solana-labs/solana/releases/download/v1.19.6/solana-release-x86_64-unknown-linux-gnu.tar.bz2
-          mkdir -p $HOME/solana/release
-          tar -xjf $HOME/solana/solana.tar.bz2 -C $HOME/solana/release
-          echo "$HOME/solana/release/solana-release/bin" >> $GITHUB_PATH
-          $HOME/solana/release/solana-release/bin/solana --version
-          $HOME/solana/release/solana-release/bin/cargo-build-sbf --help || true
+          sh -c "$(curl -sSfL https://release.solana.com/v1.19.5/install)" || \
+          sh -c "$(curl -sSfL https://release.solana.com/stable/install)"
+          echo "$HOME/.local/share/solana/install/active_release/bin" >> $GITHUB_PATH
+          $HOME/.local/share/solana/install/active_release/bin/solana --version
+          $HOME/.local/share/solana/install/active_release/bin/rustc --version || true
+          $HOME/.local/share/solana/install/active_release/bin/cargo --version || true
+          $HOME/.local/share/solana/install/active_release/bin/cargo-build-sbf --help || true
 
       - name: Install Rust 1.79.0 for Anchor CLI build
         uses: actions-rs/toolchain@v1
@@ -44,7 +44,7 @@ jobs:
           echo "$HOME/.cargo/bin" >> $GITHUB_PATH
           anchor --version
           mkdir -p ~/.config/solana
-          $HOME/solana/release/solana-release/bin/solana-keygen new --no-bip39-passphrase --silent -o ~/.config/solana/id.json
+          $HOME/.local/share/solana/install/active_release/bin/solana-keygen new --no-bip39-passphrase --silent -o ~/.config/solana/id.json
 
       - name: Prepare lockfile (v3) pinned to SBF-compatible toml chain
         run: |
@@ -58,6 +58,9 @@ jobs:
 
       - name: Build program (anchor)
         run: |
+          export PATH="$HOME/.local/share/solana/install/active_release/bin:$PATH"
+          rustc --version || true
+          cargo --version || true
           anchor build -- --locked
 
       - name: Upload build artifacts
