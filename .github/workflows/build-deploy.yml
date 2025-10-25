@@ -14,15 +14,15 @@ jobs:
           sh -c "$(curl -sSfL https://release.solana.com/v1.18.15/install)"
           echo "$HOME/.local/share/solana/install/active_release/bin" >> $GITHUB_PATH
       
-      - name: Install Rust (pinned to 1.82.0 for AVM compatibility)
+      - name: Install Rust (pinned to 1.79.0 to avoid time crate issue)
         uses: actions-rs/toolchain@v1
         with:
-          toolchain: 1.82.0
+          toolchain: 1.79.0
           override: true
       
       - name: Install Anchor CLI (direct)
         run: |
-          cargo install --git https://github.com/coral-xyz/anchor --tag v0.30.1 anchor-cli --locked --force
+          cargo install --git https://github.com/coral-xyz/anchor --tag v0.30.1 anchor-cli --locked --force || cargo install --git https://github.com/coral-xyz/anchor --tag v0.30.1 anchor-cli --force
           echo "$HOME/.cargo/bin" >> $GITHUB_PATH
           ~/.cargo/bin/anchor --version
       
