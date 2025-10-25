@@ -22,6 +22,7 @@ jobs:
       - name: Build SBF program
         run: |
           cargo --version
+          rm -f programs/validator_lock/Cargo.lock
           $HOME/solana/release/solana-release/bin/cargo-build-sbf --manifest-path programs/validator_lock/Cargo.toml
           ls -la programs/validator_lock/target/deploy || true
 
