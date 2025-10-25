@@ -5,15 +5,14 @@
 
 use anchor_lang::prelude::*;
 use anchor_spl::associated_token::AssociatedToken;
-use anchor_spl::token_interface::{self as token, Mint, TokenAccount, TokenInterface, TransferChecked};
+use anchor_spl::token::{self, Mint, Token, TokenAccount, Transfer};
 use blake3::Hasher as Blake3Hasher;
 use anchor_lang::solana_program::{
     ed25519_program,
     sysvar::instructions as sysvar_instructions,
-    compute_budget,
 };
 
-declare_id!("Val1dAt0rLock1111111111111111111111111111111");
+declare_id!("9o5T1cRj3oSw49gp5gKgVfPgNMjQSuD3rMiTU9BxeLZx");
 
 /// Program entrypoint module for validator_lock per Master_Blueprint.md
 #[program]
