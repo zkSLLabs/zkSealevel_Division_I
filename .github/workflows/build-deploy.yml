@@ -6,68 +6,21 @@ on:
 jobs:
   build-deploy:
     runs-on: ubuntu-latest
+    container:
+      image: docker.io/solanalabs/solana:v1.19.5
     steps:
       - uses: actions/checkout@v4
 
-      - name: Install Rust 1.82 (host toolchain)
-        uses: actions-rs/toolchain@v1
-        with:
-          toolchain: 1.82.0
-          override: true
-
-      - name: Install Solana CLI (installer with fallback)
+      - name: Build SBF program
         run: |
-          sh -c "$(curl -sSfL https://release.solana.com/v1.19.5/install)" || \
-          sh -c "$(curl -sSfL https://release.solana.com/stable/install)"
-          echo "$HOME/.local/share/solana/install/active_release/bin" >> $GITHUB_PATH
-          $HOME/.local/share/solana/install/active_release/bin/solana --version
-          $HOME/.local/share/solana/install/active_release/bin/rustc --version || true
-          $HOME/.local/share/solana/install/active_release/bin/cargo --version || true
-          $HOME/.local/share/solana/install/active_release/bin/cargo-build-sbf --help || true
-
-      - name: Install Rust 1.79.0 for Anchor CLI build
-        uses: actions-rs/toolchain@v1
-        with:
-          toolchain: 1.79.0
-          override: false
-
-      - name: Install Rust 1.75.0 for lockfile generation
-        uses: actions-rs/toolchain@v1
-        with:
-          toolchain: 1.75.0
-          override: false
-
-      - name: Install Anchor CLI v0.30.1 via cargo and set up wallet
-        run: |
-          rm -f $HOME/.cargo/bin/anchor || true
-          rustup run 1.79.0 cargo install --git https://github.com/coral-xyz/anchor --tag v0.30.1 anchor-cli --locked --force
-          echo "$HOME/.cargo/bin" >> $GITHUB_PATH
-          anchor --version
-          mkdir -p ~/.config/solana
-          $HOME/.local/share/solana/install/active_release/bin/solana-keygen new --no-bip39-passphrase --silent -o ~/.config/solana/id.json
-
-      - name: Prepare lockfile (v3) pinned to SBF-compatible toml chain
-        run: |
-          pushd programs/validator_lock
-          rustup run 1.75.0 cargo generate-lockfile
-          rustup run 1.75.0 cargo update -p cargo_toml --precise 0.19.2 || true
-          rustup run 1.75.0 cargo update -p toml --precise 0.8.2 || true
-          rustup run 1.75.0 cargo update -p toml_edit --precise 0.20.2 || true
-          rustup run 1.75.0 cargo update -p toml_datetime --precise 0.6.5 || true
-          popd
-
-      - name: Build program (anchor)
-        run: |
-          export PATH="$HOME/.local/share/solana/install/active_release/bin:$PATH"
-          rustc --version || true
-          cargo --version || true
-          anchor build -- --locked
+          cargo --version
+          rustc --version
+          cargo-build-sbf --manifest-path programs/validator_lock/Cargo.toml
+          ls -la programs/validator_lock/target/deploy || true
 
       - name: Upload build artifacts
         uses: actions/upload-artifact@v4
         with:
           name: validator_lock-program
           path: |
-            target/deploy/validator_lock.so
-            target/deploy/validator_lock-keypair.json
-            target/idl/validator_lock.json
+            programs/validator_lock/target/deploy/validator_lock.so
