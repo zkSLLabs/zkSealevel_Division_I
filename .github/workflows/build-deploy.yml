@@ -42,6 +42,7 @@ jobs:
 
       - name: Build program (anchor)
         run: |
+          rm -f programs/validator_lock/Cargo.lock
           anchor build
 
       - name: Upload build artifacts
