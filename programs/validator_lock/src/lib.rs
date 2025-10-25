@@ -2,6 +2,7 @@
 #![deny(warnings, clippy::all, clippy::pedantic, clippy::nursery, clippy::cargo)]
 #![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::todo, clippy::unimplemented)]
 #![deny(missing_docs, rustdoc::broken_intra_doc_links)]
+#![allow(unexpected_cfgs)]
 
 use anchor_lang::prelude::*;
 use anchor_spl::associated_token::AssociatedToken;
@@ -10,6 +11,7 @@ use blake3::Hasher as Blake3Hasher;
 use anchor_lang::solana_program::{
     ed25519_program,
     sysvar::instructions as sysvar_instructions,
+    compute_budget,
 };
 
 declare_id!("9o5T1cRj3oSw49gp5gKgVfPgNMjQSuD3rMiTU9BxeLZx");
@@ -39,10 +41,9 @@ pub mod validator_lock {
         let decimals = ctx.accounts.zksl_mint.decimals;
         let amount: u64 = 10u64.pow(decimals as u32);
         require!(ctx.accounts.validator_escrow.amount == amount, ErrorCode::InvalidLockAmount);
-        // Transfer back to validator ATA using escrow PDA as signer (checked)
-        let cpi_accounts = TransferChecked {
+        // Transfer back to validator ATA using escrow PDA as signer
+        let cpi_accounts = Transfer {
             from: ctx.accounts.validator_escrow.to_account_info(),
-            mint: ctx.accounts.zksl_mint.to_account_info(),
             to: ctx.accounts.validator_ata.to_account_info(),
             authority: ctx.accounts.escrow_authority.to_account_info(),
         };
@@ -54,7 +55,7 @@ pub mod validator_lock {
             cpi_accounts,
             &[signer_seeds],
         );
-        token::transfer_checked(cpi_ctx, amount, decimals)?;
+        token::transfer(cpi_ctx, amount)?;
         ctx.accounts.validator_record.status = 1;
         Ok(())
     }
@@ -69,17 +70,16 @@ pub mod validator_lock {
         if rec_existing.validator_pubkey != Pubkey::default() {
             require!(rec_existing.status != 0, ErrorCode::AlreadyRegistered);
         }
-        // Transfer checked for decimals
+        // Transfer
         let decimals = ctx.accounts.zksl_mint.decimals;
         let amount: u64 = 10u64.pow(decimals as u32);
-        let cpi_accounts = TransferChecked {
+        let cpi_accounts = Transfer {
             from: ctx.accounts.validator_ata.to_account_info(),
-            mint: ctx.accounts.zksl_mint.to_account_info(),
             to: ctx.accounts.validator_escrow.to_account_info(),
             authority: ctx.accounts.validator.to_account_info(),
         };
         let cpi_ctx = CpiContext::new(ctx.accounts.token_program.to_account_info(), cpi_accounts);
-        token::transfer_checked(cpi_ctx, amount, decimals)?;
+        token::transfer(cpi_ctx, amount)?;
 
         let rec = &mut ctx.accounts.validator_record;
         rec.validator_pubkey = ctx.accounts.validator.key();
@@ -127,7 +127,7 @@ pub mod validator_lock {
         let mut i: usize = 0;
         let mut has_compute_ok = false;
         loop {
-            let ix = sysvar_instructions::load_instruction_at(i, &ix_acc).ok();
+            let ix = sysvar_instructions::load_instruction_at_checked(i, &ix_acc).ok();
             if ix.is_none() { break; }
             let ix = ix.unwrap();
             if ix.program_id == ed25519_program::id() { ed_count += 1; }
@@ -147,7 +147,7 @@ pub mod validator_lock {
         require!(ed_count == 1, ErrorCode::BadEd25519Order);
         require!(has_compute_ok, ErrorCode::InsufficientBudget);
         let last_ix_idx = i.saturating_sub(2);
-        let prev_ix = sysvar_instructions::load_instruction_at(last_ix_idx, &ix_acc)
+        let prev_ix = sysvar_instructions::load_instruction_at_checked(last_ix_idx, &ix_acc)
             .map_err(|_| error!(ErrorCode::BadEd25519Order))?;
         prev_is_ed25519 = prev_ix.program_id == ed25519_program::id();
         require!(prev_is_ed25519, ErrorCode::BadEd25519Order);
@@ -259,7 +259,7 @@ pub struct Initialize<'info> {
     pub payer: Signer<'info>,
     /// CHECK: admin is recorded only
     pub admin: UncheckedAccount<'info>,
-    pub zksl_mint: InterfaceAccount<'info, Mint>,
+    pub zksl_mint: Account<'info, Mint>,
     #[account(init, payer = payer, seeds = [b"zksl", b"config"], bump, space = 8 + Config::SIZE)]
     pub config: Account<'info, Config>,
     pub system_program: Program<'info, System>,
@@ -270,7 +270,7 @@ pub struct Initialize<'info> {
 pub struct RegisterValidator<'info> {
     #[account(mut)]
     pub validator: Signer<'info>,
-    pub zksl_mint: InterfaceAccount<'info, Mint>,
+    pub zksl_mint: Account<'info, Mint>,
     #[account(mut, has_one = zksl_mint)]
     pub config: Account<'info, Config>,
     #[account(init_if_needed, payer = validator, seeds = [b"zksl", b"validator", validator.key().as_ref()], bump, space = 8 + ValidatorRecord::SIZE)]
@@ -279,10 +279,10 @@ pub struct RegisterValidator<'info> {
     #[account(seeds = [b"zksl", b"escrow", validator.key().as_ref()], bump)]
     pub escrow_authority: UncheckedAccount<'info>,
     #[account(init_if_needed, payer = validator, associated_token::mint = zksl_mint, associated_token::authority = escrow_authority, associated_token::token_program = token_program)]
-    pub validator_escrow: InterfaceAccount<'info, TokenAccount>,
+    pub validator_escrow: Account<'info, TokenAccount>,
     #[account(mut)]
-    pub validator_ata: InterfaceAccount<'info, TokenAccount>,
-    pub token_program: Program<'info, TokenInterface>,
+    pub validator_ata: Account<'info, TokenAccount>,
+    pub token_program: Program<'info, Token>,
     pub associated_token_program: Program<'info, AssociatedToken>,
     pub system_program: Program<'info, System>,
 }
@@ -300,7 +300,7 @@ pub struct UpdateConfig<'info> {
 pub struct UnlockValidator<'info> {
     #[account(mut)]
     pub validator: Signer<'info>,
-    pub zksl_mint: InterfaceAccount<'info, Mint>,
+    pub zksl_mint: Account<'info, Mint>,
     #[account(mut, has_one = zksl_mint)]
     pub config: Account<'info, Config>,
     #[account(mut, seeds = [b"zksl", b"validator", validator.key().as_ref()], bump)]
@@ -309,10 +309,10 @@ pub struct UnlockValidator<'info> {
     #[account(seeds = [b"zksl", b"escrow", validator.key().as_ref()], bump)]
     pub escrow_authority: UncheckedAccount<'info>,
     #[account(mut)]
-    pub validator_escrow: InterfaceAccount<'info, TokenAccount>,
+    pub validator_escrow: Account<'info, TokenAccount>,
     #[account(mut)]
-    pub validator_ata: InterfaceAccount<'info, TokenAccount>,
-    pub token_program: Program<'info, TokenInterface>,
+    pub validator_ata: Account<'info, TokenAccount>,
+    pub token_program: Program<'info, Token>,
 }
 
 /// Initialize arguments
@@ -458,6 +458,7 @@ impl ProofRecord { pub const SIZE: usize = 16 + 8 + 8 + 32 + 4 + 32 + 32 + 32 + 
 #[derive(Accounts)]
 #[instruction(artifact_id: [u8;16], proof_hash: [u8;32], seq: u64)]
 pub struct AnchorProof<'info> {
+    #[account(mut)]
     pub submitted_by: Signer<'info>,
     #[account(mut)]
     pub config: Account<'info, Config>,
