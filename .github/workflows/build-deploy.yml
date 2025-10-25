@@ -35,6 +35,10 @@ jobs:
           pushd programs/validator_lock
           rm -f Cargo.lock
           rustup run 1.75.0 cargo generate-lockfile
+          # Pin toml dependency chain to versions compatible with SBF rustc 1.75.0-dev
+          rustup run 1.75.0 cargo update -p toml --precise 0.8.2 || true
+          rustup run 1.75.0 cargo update -p toml_edit --precise 0.20.2 || true
+          rustup run 1.75.0 cargo update -p toml_datetime --precise 0.6.5 || true
           popd
 
       - name: Build SBF program
