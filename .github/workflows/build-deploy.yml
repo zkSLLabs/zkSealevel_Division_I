@@ -9,17 +9,20 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Install Solana CLI
+      - name: Install Solana CLI (GitHub tarball)
         run: |
-          sh -c "$(curl -sSfL https://release.solana.com/v1.18.15/install)"
-          echo "$HOME/.local/share/solana/install/active_release/bin" >> $GITHUB_PATH
-          solana --version
-          cargo-build-sbf --help || true
+          mkdir -p $HOME/solana
+          wget -O $HOME/solana/solana.tar.bz2 https://github.com/solana-labs/solana/releases/download/v1.18.15/solana-release-x86_64-unknown-linux-gnu.tar.bz2
+          mkdir -p $HOME/solana/release
+          tar -xjf $HOME/solana/solana.tar.bz2 -C $HOME/solana/release
+          echo "$HOME/solana/release/solana-release/bin" >> $GITHUB_PATH
+          $HOME/solana/release/solana-release/bin/solana --version
+          $HOME/solana/release/solana-release/bin/cargo-build-sbf --help || true
 
       - name: Build SBF program
         run: |
           cargo --version
-          cargo-build-sbf --manifest-path programs/validator_lock/Cargo.toml
+          $HOME/solana/release/solana-release/bin/cargo-build-sbf --manifest-path programs/validator_lock/Cargo.toml
           ls -la programs/validator_lock/target/deploy || true
 
       - name: Upload build artifacts
