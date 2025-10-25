@@ -11,10 +11,11 @@ use blake3::Hasher as Blake3Hasher;
 use anchor_lang::solana_program::{
     ed25519_program,
     sysvar::instructions as sysvar_instructions,
+    pubkey,
 };
 
 // Compute budget program ID constant
-const COMPUTE_BUDGET_ID: Pubkey = solana_program::pubkey!("ComputeBudget111111111111111111111111111111");
+const COMPUTE_BUDGET_ID: Pubkey = pubkey!("ComputeBudget111111111111111111111111111111");
 
 declare_id!("9o5T1cRj3oSw49gp5gKgVfPgNMjQSuD3rMiTU9BxeLZx");
 
@@ -128,7 +129,6 @@ pub mod validator_lock {
         // Strict Ed25519 preflight checks: ensure previous ix is Ed25519 and only one Ed25519 in tx
         let ix_acc = ctx.accounts.sysvar_instructions.to_account_info();
         let mut ed_count: u32 = 0;
-        let mut prev_is_ed25519 = false;
         let mut i: usize = 0;
         let mut has_compute_ok = false;
         loop {
@@ -154,7 +154,7 @@ pub mod validator_lock {
         let last_ix_idx = i.saturating_sub(2);
         let prev_ix = sysvar_instructions::load_instruction_at_checked(last_ix_idx, &ix_acc)
             .map_err(|_| error!(ErrorCode::BadEd25519Order))?;
-        prev_is_ed25519 = prev_ix.program_id == ed25519_program::id();
+        let prev_is_ed25519 = prev_ix.program_id == ed25519_program::id();
         require!(prev_is_ed25519, ErrorCode::BadEd25519Order);
 
         // seq monotonic (global, across key rotation)
