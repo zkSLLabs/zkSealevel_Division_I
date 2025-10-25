@@ -31,6 +31,12 @@ jobs:
           toolchain: 1.79.0
           override: false
 
+      - name: Install Rust 1.75.0 for lockfile generation
+        uses: actions-rs/toolchain@v1
+        with:
+          toolchain: 1.75.0
+          override: false
+
       - name: Install Anchor CLI v0.30.1 via cargo and set up wallet
         run: |
           rm -f $HOME/.cargo/bin/anchor || true
@@ -40,9 +46,18 @@ jobs:
           mkdir -p ~/.config/solana
           $HOME/solana/release/solana-release/bin/solana-keygen new --no-bip39-passphrase --silent -o ~/.config/solana/id.json
 
+      - name: Prepare lockfile (v3) pinned to SBF-compatible toml chain
+        run: |
+          pushd programs/validator_lock
+          rustup run 1.75.0 cargo generate-lockfile
+          rustup run 1.75.0 cargo update -p cargo_toml --precise 0.19.2 || true
+          rustup run 1.75.0 cargo update -p toml --precise 0.8.2 || true
+          rustup run 1.75.0 cargo update -p toml_edit --precise 0.20.2 || true
+          rustup run 1.75.0 cargo update -p toml_datetime --precise 0.6.5 || true
+          popd
+
       - name: Build program (anchor)
         run: |
-          rm -f programs/validator_lock/Cargo.lock
           anchor build
 
       - name: Upload build artifacts
