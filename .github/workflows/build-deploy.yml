@@ -5,18 +5,36 @@ on:
 
 jobs:
   build-deploy:
-    runs-on: ubuntu-latest
-    container:
-      image: ghcr.io/anza-xyz/agave:stable
+    runs-on: ubuntu-22.04
     steps:
       - uses: actions/checkout@v4
 
+      - name: Install Rust and Solana toolchain
+        run: |
+          curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain 1.78.0
+          source "$HOME/.cargo/env"
+          echo "$HOME/.cargo/bin" >> $GITHUB_PATH
+          rustc --version
+          cargo --version
+
+      - name: Install Solana (direct binary)
+        run: |
+          SOLANA_VERSION=1.18.18
+          curl -L -o /tmp/solana.tar.bz2 "https://github.com/solana-labs/solana/releases/download/v${SOLANA_VERSION}/solana-release-x86_64-unknown-linux-gnu.tar.bz2"
+          tar -xjf /tmp/solana.tar.bz2 -C /tmp
+          sudo cp -r /tmp/solana-release/bin/* /usr/local/bin/
+          solana --version
+          cargo-build-sbf --version || true
+
+      - name: Remove problematic Cargo.lock
+        run: |
+          rm -f programs/validator_lock/Cargo.lock
+
       - name: Build SBF program
         run: |
-          cargo --version
-          rustc --version
-          cargo-build-sbf --manifest-path programs/validator_lock/Cargo.toml
-          ls -la programs/validator_lock/target/deploy || true
+          cd programs/validator_lock
+          cargo-build-sbf
+          ls -la target/deploy/
 
       - name: Upload build artifacts
         uses: actions/upload-artifact@v4
