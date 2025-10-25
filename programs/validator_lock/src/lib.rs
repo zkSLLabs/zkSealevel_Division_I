@@ -11,8 +11,10 @@ use blake3::Hasher as Blake3Hasher;
 use anchor_lang::solana_program::{
     ed25519_program,
     sysvar::instructions as sysvar_instructions,
-    compute_budget,
 };
+
+// Compute budget program ID
+declare_id_const!(COMPUTE_BUDGET_ID, "ComputeBudget111111111111111111111111111111");
 
 declare_id!("9o5T1cRj3oSw49gp5gKgVfPgNMjQSuD3rMiTU9BxeLZx");
 
@@ -47,9 +49,11 @@ pub mod validator_lock {
             to: ctx.accounts.validator_ata.to_account_info(),
             authority: ctx.accounts.escrow_authority.to_account_info(),
         };
-        let seeds: &[&[u8]] = &[b"zksl", b"escrow", ctx.accounts.validator.key.as_ref()];
+        let validator_key = ctx.accounts.validator.key();
+        let seeds = &[b"zksl".as_ref(), b"escrow".as_ref(), validator_key.as_ref()];
         let (_pda, bump) = Pubkey::find_program_address(seeds, ctx.program_id);
-        let signer_seeds: &[&[u8]] = &[b"zksl", b"escrow", ctx.accounts.validator.key.as_ref(), &[bump]];
+        let bump_slice = &[bump];
+        let signer_seeds = &[b"zksl".as_ref(), b"escrow".as_ref(), validator_key.as_ref(), bump_slice];
         let cpi_ctx = CpiContext::new_with_signer(
             ctx.accounts.token_program.to_account_info(),
             cpi_accounts,
@@ -131,7 +135,7 @@ pub mod validator_lock {
             if ix.is_none() { break; }
             let ix = ix.unwrap();
             if ix.program_id == ed25519_program::id() { ed_count += 1; }
-            if ix.program_id == compute_budget::id() {
+            if ix.program_id == COMPUTE_BUDGET_ID {
                 let data = ix.data.as_slice();
                 if data.len() >= 5 {
                     let tag = data[0];
@@ -260,7 +264,7 @@ pub struct Initialize<'info> {
     /// CHECK: admin is recorded only
     pub admin: UncheckedAccount<'info>,
     pub zksl_mint: Account<'info, Mint>,
-    #[account(init, payer = payer, seeds = [b"zksl", b"config"], bump, space = 8 + Config::SIZE)]
+    #[account(init, payer = payer, seeds = [b"zksl".as_ref(), b"config".as_ref()], bump, space = 8 + Config::SIZE)]
     pub config: Account<'info, Config>,
     pub system_program: Program<'info, System>,
 }
@@ -273,10 +277,10 @@ pub struct RegisterValidator<'info> {
     pub zksl_mint: Account<'info, Mint>,
     #[account(mut, has_one = zksl_mint)]
     pub config: Account<'info, Config>,
-    #[account(init_if_needed, payer = validator, seeds = [b"zksl", b"validator", validator.key().as_ref()], bump, space = 8 + ValidatorRecord::SIZE)]
+    #[account(init_if_needed, payer = validator, seeds = [b"zksl".as_ref(), b"validator".as_ref(), validator.key().as_ref()], bump, space = 8 + ValidatorRecord::SIZE)]
     pub validator_record: Account<'info, ValidatorRecord>,
     /// CHECK: PDA authority for escrow
-    #[account(seeds = [b"zksl", b"escrow", validator.key().as_ref()], bump)]
+    #[account(seeds = [b"zksl".as_ref(), b"escrow".as_ref(), validator.key().as_ref()], bump)]
     pub escrow_authority: UncheckedAccount<'info>,
     #[account(init_if_needed, payer = validator, associated_token::mint = zksl_mint, associated_token::authority = escrow_authority, associated_token::token_program = token_program)]
     pub validator_escrow: Account<'info, TokenAccount>,
@@ -303,10 +307,10 @@ pub struct UnlockValidator<'info> {
     pub zksl_mint: Account<'info, Mint>,
     #[account(mut, has_one = zksl_mint)]
     pub config: Account<'info, Config>,
-    #[account(mut, seeds = [b"zksl", b"validator", validator.key().as_ref()], bump)]
+    #[account(mut, seeds = [b"zksl".as_ref(), b"validator".as_ref(), validator.key().as_ref()], bump)]
     pub validator_record: Account<'info, ValidatorRecord>,
     /// CHECK: PDA authority for escrow
-    #[account(seeds = [b"zksl", b"escrow", validator.key().as_ref()], bump)]
+    #[account(seeds = [b"zksl".as_ref(), b"escrow".as_ref(), validator.key().as_ref()], bump)]
     pub escrow_authority: UncheckedAccount<'info>,
     #[account(mut)]
     pub validator_escrow: Account<'info, TokenAccount>,
@@ -462,13 +466,13 @@ pub struct AnchorProof<'info> {
     pub submitted_by: Signer<'info>,
     #[account(mut)]
     pub config: Account<'info, Config>,
-    #[account(init_if_needed, payer = submitted_by, seeds = [b"zksl", b"aggregator"], bump, space = 8 + AggregatorState::SIZE)]
+    #[account(init_if_needed, payer = submitted_by, seeds = [b"zksl".as_ref(), b"aggregator".as_ref()], bump, space = 8 + AggregatorState::SIZE)]
     pub aggregator_state: Account<'info, AggregatorState>,
-    #[account(init_if_needed, payer = submitted_by, seeds = [b"zksl", b"range"], bump, space = 8 + RangeState::SIZE)]
+    #[account(init_if_needed, payer = submitted_by, seeds = [b"zksl".as_ref(), b"range".as_ref()], bump, space = 8 + RangeState::SIZE)]
     pub range_state: Account<'info, RangeState>,
-    #[account(init, payer = submitted_by, seeds = [b"zksl", b"proof", proof_hash.as_ref(), &seq.to_le_bytes()], bump, space = 8 + ProofRecord::SIZE)]
+    #[account(init, payer = submitted_by, seeds = [b"zksl".as_ref(), b"proof".as_ref(), proof_hash.as_ref(), &seq.to_le_bytes()], bump, space = 8 + ProofRecord::SIZE)]
     pub proof_record: Account<'info, ProofRecord>,
-    #[account(mut, seeds = [b"zksl", b"validator", submitted_by.key().as_ref()], bump)]
+    #[account(mut, seeds = [b"zksl".as_ref(), b"validator".as_ref(), submitted_by.key().as_ref()], bump)]
     pub validator_record: Account<'info, ValidatorRecord>,
     /// CHECK: instructions sysvar
     pub sysvar_instructions: UncheckedAccount<'info>,
