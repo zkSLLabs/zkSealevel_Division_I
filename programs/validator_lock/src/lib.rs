@@ -1,8 +1,15 @@
+//! Validator Lock Program for zkSealevel
+//! 
+//! This program implements the on-chain validator registration, proof anchoring,
+//! and token locking mechanisms for the zkSealevel system as specified in the
+//! Master Blueprint and POC Execution Plan.
+
 #![forbid(unsafe_code)]
 #![deny(warnings, clippy::all, clippy::pedantic, clippy::nursery, clippy::cargo)]
 #![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::todo, clippy::unimplemented)]
-#![deny(missing_docs, rustdoc::broken_intra_doc_links)]
+#![deny(rustdoc::broken_intra_doc_links)]
 #![allow(unexpected_cfgs)]
+#![allow(missing_docs)] // Allow for Anchor-generated code
 
 use anchor_lang::prelude::*;
 use anchor_spl::associated_token::AssociatedToken;
