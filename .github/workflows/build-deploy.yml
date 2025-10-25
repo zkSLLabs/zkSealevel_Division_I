@@ -17,12 +17,15 @@ jobs:
           rustc --version
           cargo --version
 
-      - name: Install Solana (direct binary)
+      - name: Install Solana (user-local)
         run: |
           SOLANA_VERSION=1.18.18
           curl -L -o /tmp/solana.tar.bz2 "https://github.com/solana-labs/solana/releases/download/v${SOLANA_VERSION}/solana-release-x86_64-unknown-linux-gnu.tar.bz2"
           tar -xjf /tmp/solana.tar.bz2 -C /tmp
-          sudo cp -r /tmp/solana-release/bin/* /usr/local/bin/
+          mkdir -p "$HOME/.local/bin"
+          cp -r /tmp/solana-release/bin/* "$HOME/.local/bin/"
+          echo "$HOME/.local/bin" >> $GITHUB_PATH
+          export PATH="$HOME/.local/bin:$PATH"
           solana --version
           cargo-build-sbf --version || true
 
@@ -32,6 +35,7 @@ jobs:
 
       - name: Build SBF program
         run: |
+          export PATH="$HOME/.local/bin:$PATH"
           cd programs/validator_lock
           cargo-build-sbf
           ls -la target/deploy/
