@@ -11,11 +11,15 @@ use blake3::Hasher as Blake3Hasher;
 use anchor_lang::solana_program::{
     ed25519_program,
     sysvar::instructions as sysvar_instructions,
-    pubkey,
 };
 
-// Compute budget program ID constant
-const COMPUTE_BUDGET_ID: Pubkey = pubkey!("ComputeBudget111111111111111111111111111111");
+// Compute budget program ID: ComputeBudget111111111111111111111111111111
+const COMPUTE_BUDGET_ID: Pubkey = Pubkey::new_from_array([
+    0x03, 0x06, 0x46, 0x6f, 0xe5, 0x21, 0x17, 0x32,
+    0xff, 0xec, 0xad, 0xba, 0x72, 0xc3, 0x9b, 0xe7,
+    0xbc, 0x8c, 0xe5, 0xbb, 0xc5, 0xf7, 0x12, 0x6b,
+    0x2c, 0x43, 0x9b, 0x3a, 0x40, 0x00, 0x00, 0x00,
+]);
 
 declare_id!("9o5T1cRj3oSw49gp5gKgVfPgNMjQSuD3rMiTU9BxeLZx");
 
