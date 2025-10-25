@@ -8,46 +8,23 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      
+
       - name: Install Solana CLI
         run: |
           sh -c "$(curl -sSfL https://release.solana.com/v1.18.15/install)"
           echo "$HOME/.local/share/solana/install/active_release/bin" >> $GITHUB_PATH
-      
-      - name: Install Rust (pinned to 1.79.0 to avoid time crate issue)
-        uses: actions-rs/toolchain@v1
-        with:
-          toolchain: 1.79.0
-          override: true
-      
-      - name: Install Anchor CLI (direct)
+          solana --version
+          cargo-build-sbf --help || true
+
+      - name: Build SBF program
         run: |
-          cargo install --git https://github.com/coral-xyz/anchor --tag v0.30.1 anchor-cli --locked --force || cargo install --git https://github.com/coral-xyz/anchor --tag v0.30.1 anchor-cli --force
-          echo "$HOME/.cargo/bin" >> $GITHUB_PATH
-          ~/.cargo/bin/anchor --version
-      
-      - name: Build program
-        run: |
-          ~/.cargo/bin/anchor build
-      
+          cargo --version
+          cargo-build-sbf --manifest-path programs/validator_lock/Cargo.toml
+          ls -la programs/validator_lock/target/deploy || true
+
       - name: Upload build artifacts
         uses: actions/upload-artifact@v4
         with:
           name: validator_lock-program
           path: |
-            target/deploy/validator_lock.so
-            target/deploy/validator_lock-keypair.json
-            target/idl/validator_lock.json
-      
-      - name: Deploy to devnet (if secrets present)
-        if: env.SOLANA_DEPLOYER_KEY != ''
-        env:
-          SOLANA_DEPLOYER_KEY: ${{ secrets.SOLANA_DEPLOYER_KEY }}
-        run: |
-          echo "${{ secrets.SOLANA_DEPLOYER_KEY }}" > deployer.json
-          solana config set --url https://api.devnet.solana.com
-          solana airdrop 2 -k deployer.json || true
-          ~/.cargo/bin/anchor deploy --provider.cluster devnet --provider.wallet deployer.json
-          PID=$(solana address -k target/deploy/validator_lock-keypair.json)
-          echo "Program ID: $PID"
-          solana program show "$PID"
+            programs/validator_lock/target/deploy/validator_lock.so
