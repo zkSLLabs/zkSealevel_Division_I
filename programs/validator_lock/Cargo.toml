@@ -13,3 +13,7 @@ bytemuck = "1.15"
 blake3 = "1.5"
 
 
+[patch.crates-io]
+toml_parser = "=1.0.3"
+
+
