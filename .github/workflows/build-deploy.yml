@@ -17,9 +17,9 @@ jobs:
           rustc --version
           cargo --version
 
-      - name: Install Solana (user-local)
+      - name: Install Solana (user-local, v1.18.22 for rustc>=1.76)
         run: |
-          SOLANA_VERSION=1.18.18
+          SOLANA_VERSION=1.18.22
           curl -L -o /tmp/solana.tar.bz2 "https://github.com/solana-labs/solana/releases/download/v${SOLANA_VERSION}/solana-release-x86_64-unknown-linux-gnu.tar.bz2"
           tar -xjf /tmp/solana.tar.bz2 -C /tmp
           mkdir -p "$HOME/.local/bin"
@@ -28,6 +28,7 @@ jobs:
           export PATH="$HOME/.local/bin:$PATH"
           solana --version
           cargo-build-sbf --version || true
+          rustc --version || true
 
       - name: Remove problematic Cargo.lock
         run: |
