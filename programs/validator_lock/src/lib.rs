@@ -13,8 +13,8 @@ use anchor_lang::solana_program::{
     sysvar::instructions as sysvar_instructions,
 };
 
-// Compute budget program ID
-declare_id_const!(COMPUTE_BUDGET_ID, "ComputeBudget111111111111111111111111111111");
+// Compute budget program ID constant
+const COMPUTE_BUDGET_ID: Pubkey = solana_program::pubkey!("ComputeBudget111111111111111111111111111111");
 
 declare_id!("9o5T1cRj3oSw49gp5gKgVfPgNMjQSuD3rMiTU9BxeLZx");
 
@@ -53,11 +53,12 @@ pub mod validator_lock {
         let seeds = &[b"zksl".as_ref(), b"escrow".as_ref(), validator_key.as_ref()];
         let (_pda, bump) = Pubkey::find_program_address(seeds, ctx.program_id);
         let bump_slice = &[bump];
-        let signer_seeds = &[b"zksl".as_ref(), b"escrow".as_ref(), validator_key.as_ref(), bump_slice];
+        let signer_seeds: &[&[u8]] = &[b"zksl".as_ref(), b"escrow".as_ref(), validator_key.as_ref(), bump_slice];
+        let signers_seeds = &[signer_seeds];
         let cpi_ctx = CpiContext::new_with_signer(
             ctx.accounts.token_program.to_account_info(),
             cpi_accounts,
-            &[signer_seeds],
+            signers_seeds,
         );
         token::transfer(cpi_ctx, amount)?;
         ctx.accounts.validator_record.status = 1;
