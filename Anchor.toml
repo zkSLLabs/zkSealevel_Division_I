@@ -7,7 +7,7 @@ members = [
 cluster = "Localnet"
 wallet = "~/.config/solana/id.json"
 
-[programs.localnet]
-validator_lock = "Val1dAt0rLock1111111111111111111111111111111"
+#[programs.localnet]
+#validator_lock = "9o5T1cRj3oSw49gp5gKgVfPgNMjQSuD3rMiTU9BxeLZx"
 
 
