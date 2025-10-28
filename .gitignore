@@ -1,0 +1,88 @@
+# =====================
+# Privacy & Secrets
+# =====================
+# Environment files
+.env
+.env.*
+!.env.example
+.envrc
+.direnv/
+
+# Keys and private material
+keys/
+**/keys/**
+*.pem
+*.key
+*.der
+*.p12
+*.pfx
+*.crt
+*.cer
+
+# Anchor/Solana sensitive keypairs generated during builds
+**/target/deploy/*-keypair.json
+
+# =====================
+# Generated Artifacts & Volumes
+# =====================
+# Proof artifacts and demo outputs
+data/artifacts/
+orchestrator/data/artifacts/
+artifacts/
+**/artifacts/fuzz/**
+
+# Docker volumes (created alongside repo)
+pgdata/
+ledger/
+dump.rdb
+
+# Replay/fuzz bundles (if recorded locally)
+replay.json
+
+# =====================
+# Build Outputs & Caches
+# =====================
+node_modules/
+**/node_modules/
+dist/
+**/dist/
+build/
+**/build/
+target/
+**/target/
+.cache/
+**/.cache/
+tmp/
+**/tmp/
+out/
+*.tsbuildinfo
+*.sqlite
+*.sqlite3
+*.db
+
+# =====================
+# Logs & Coverage
+# =====================
+*.log
+npm-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+logs/
+coverage/
+**/coverage/
+
+# =====================
+# IDE / OS files
+# =====================
+.vscode/
+.idea/
+.history/
+.DS_Store
+Thumbs.db
+*.swp
+.pnpm-store/
+.nyc_output/
+.eslintcache
+.anchor/
+*.pid
+*~

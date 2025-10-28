@@ -1,0 +1,45 @@
+name: Build and Deploy to Devnet
+
+on:
+  workflow_dispatch:
+
+jobs:
+  build-deploy:
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust and Solana toolchain
+        run: |
+          curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain 1.78.0
+          source "$HOME/.cargo/env"
+          echo "$HOME/.cargo/bin" >> $GITHUB_PATH
+          rustc --version
+          cargo --version
+
+      - name: Install Solana (stable via official script for rustc>=1.76)
+        run: |
+          sh -c "$(curl -sSfL https://release.anza.xyz/stable/install)"
+          echo "$HOME/.local/share/solana/install/active_release/bin" >> $GITHUB_PATH
+          export PATH="$HOME/.local/share/solana/install/active_release/bin:$PATH"
+          solana --version
+          cargo-build-sbf --version || true
+          rustc --version || true
+
+      - name: Remove problematic Cargo.lock
+        run: |
+          rm -f programs/validator_lock/Cargo.lock
+
+      - name: Build SBF program
+        run: |
+          export PATH="$HOME/.local/share/solana/install/active_release/bin:$PATH"
+          cd programs/validator_lock
+          cargo-build-sbf
+          ls -la target/deploy/
+
+      - name: Upload build artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: validator_lock-program
+          path: |
+            programs/validator_lock/target/deploy/validator_lock.so
