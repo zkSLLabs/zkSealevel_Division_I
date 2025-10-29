@@ -23,6 +23,9 @@ jobs:
           npm --prefix orchestrator run build
           npm --prefix indexer ci
           npm --prefix indexer run build
+      - name: Run orchestrator unit tests
+        run: |
+          npm --prefix orchestrator run test
  
   build-deploy:
     runs-on: ubuntu-22.04
