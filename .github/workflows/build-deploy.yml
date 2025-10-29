@@ -4,6 +4,26 @@ on:
   workflow_dispatch:
 
 jobs:
+  kats-and-node-build:
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - name: Install root deps
+        run: |
+          npm ci
+      - name: Run KATs
+        run: |
+          npm run kats:all
+      - name: Build TS services
+        run: |
+          npm --prefix orchestrator ci
+          npm --prefix orchestrator run build
+          npm --prefix indexer ci
+          npm --prefix indexer run build
+ 
   build-deploy:
     runs-on: ubuntu-22.04
     steps:
