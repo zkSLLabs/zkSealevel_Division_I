@@ -48,6 +48,8 @@ services:
       - PORT=8080
       - RPC_URL=http://solana:8899
       - WS_URL=ws://solana:8900
+      - PROGRAM_ID_VALIDATOR_LOCK=${PROGRAM_ID_VALIDATOR_LOCK}
+      - CHAIN_ID=${CHAIN_ID}
       - DATABASE_URL=postgres://postgres:postgres@postgres:5432/zksl
       - REDIS_URL=redis://redis:6379
     ports:
@@ -80,6 +82,8 @@ services:
     environment:
       - RPC_URL=http://solana:8899
       - WS_URL=ws://solana:8900
+      - PROGRAM_ID_VALIDATOR_LOCK=${PROGRAM_ID_VALIDATOR_LOCK}
+      - CHAIN_ID=${CHAIN_ID}
       - DATABASE_URL=postgres://postgres:postgres@postgres:5432/zksl
       - REDIS_URL=redis://redis:6379
     depends_on:

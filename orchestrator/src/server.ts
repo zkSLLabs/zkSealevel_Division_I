@@ -31,7 +31,7 @@ type Artifact = Record<string, unknown> & {
   state_root_after?: string | undefined;  // 32-byte hex
 };
 
-const artifacts = new Map<string, Artifact>();
+const artifacts = new Map<string, Artifact & { proof_hash?: string }>();
 
 // Idempotency cache (24h TTL) per Complete_Architecture.md §6 and Master_Blueprint §22
 const IDEMP_TTL_MS = 24 * 60 * 60 * 1000;
@@ -150,9 +150,29 @@ app.post("/artifact", async (req: Request, res: Response) => {
   if (window > 2048) {
     return res.status(400).json({ error: { code: "BadRequest", message: "slot window exceeds MAX_SLOTS_PER_ARTIFACT", details: { max: 2048 } } });
   }
-  const canonical = canonicalize(artifact);
-  const proofHash = Buffer.from(blake3hash(Buffer.from(canonical, "utf8"))).toString("hex");
-  const artifactId = randomUUID();
+  // Normalize hex fields to lowercase before hashing (determinism policy)
+  const srb = normalizeHex32(artifact.state_root_before);
+  const sra = normalizeHex32(artifact.state_root_after);
+
+  // Compute proof_hash from canonical minimal fields (excluding artifact_id)
+  const minimal = canonicalize({
+    start_slot: artifact.start_slot,
+    end_slot: artifact.end_slot,
+    state_root_before: srb,
+    state_root_after: sra,
+  });
+  const proofHashBytes = Buffer.from(blake3hash(Buffer.from(minimal, "utf8")));
+  const proofHashHex = Buffer.from(proofHashBytes).toString("hex");
+  const artifactId = uuidFromHash32(proofHashBytes);
+
+  // Persist canonical JSON including artifact_id
+  const canonical = canonicalize({
+    artifact_id: artifactId,
+    start_slot: artifact.start_slot,
+    end_slot: artifact.end_slot,
+    state_root_before: srb,
+    state_root_after: sra,
+  });
   const now = new Date();
   const y = String(now.getUTCFullYear());
   const m = String(now.getUTCMonth() + 1).padStart(2, "0");
@@ -165,8 +185,8 @@ app.post("/artifact", async (req: Request, res: Response) => {
     return res.status(400).json({ error: { code: "BadRequest", message: "artifact exceeds MAX_ARTIFACT_SIZE_BYTES", details: { max: 512 * 1024 } } });
   }
   await fsp.writeFile(target, Buffer.from(canonical, "utf8"));
-  artifacts.set(artifactId, { ...artifact, artifact_id: artifactId, start_slot: artifact.start_slot, end_slot: artifact.end_slot, artifact_len });
-  res.json({ artifact_id: artifactId, proof_hash: proofHash });
+  artifacts.set(artifactId, { artifact_id: artifactId, start_slot: artifact.start_slot, end_slot: artifact.end_slot, state_root_before: srb, state_root_after: sra, artifact_len, proof_hash: proofHashHex });
+  res.json({ artifact_id: artifactId, proof_hash: proofHashHex });
 });
 
 // POST /anchor: build DS and submit (stub)
@@ -175,20 +195,30 @@ app.post("/anchor", async (req: Request, res: Response) => {
   if (!artifact_id) {
     return res.status(400).json({ error: { code: "BadRequest", message: "artifact_id required", details: null } });
   }
-  const artifact = artifacts.get(artifact_id);
+  let artifact = artifacts.get(artifact_id);
   if (!artifact) {
-    return res.status(404).json({ error: { code: "NotFound", message: "artifact not found", details: null } });
+    // attempt to load from disk
+    const loaded = await loadArtifactFromDisk(artifact_id);
+    if (!loaded) return res.status(404).json({ error: { code: "NotFound", message: "artifact not found", details: null } });
+    artifact = loaded;
+    artifacts.set(artifact_id, artifact);
   }
-  // Recompute proof_hash from canonical JSON, not raw JSON
-  const canonical = canonicalize(artifact);
-  const proofHash = blake3hash(Buffer.from(canonical, "utf8"));
+  // Recompute proof_hash from minimal canonical fields (deterministic)
+  const minimal = canonicalize({
+    start_slot: artifact.start_slot,
+    end_slot: artifact.end_slot,
+    state_root_before: normalizeHex32(String(artifact.state_root_before || "")),
+    state_root_after: normalizeHex32(String(artifact.state_root_after || "")),
+  });
+  const proofHash = blake3hash(Buffer.from(minimal, "utf8"));
   const web3 = await import("@solana/web3.js");
   const programPk = new (web3 as any).PublicKey(PROGRAM_ID);
-  const seq = 1n; // demo
+  // Read aggregator state and compute next seq
+  const connection = new (web3 as any).Connection(RPC_URL, { commitment: process.env.MIN_FINALITY_COMMITMENT || "finalized" });
+  const seq = (await fetchLastSeq((web3 as any), connection, programPk)) + 1n;
   const startSlot = BigInt(artifact.start_slot ?? 1);
   const endSlot = BigInt(artifact.end_slot ?? 1);
   // Fetch on-chain config and enforce CHAIN_ID match
-  const connection = new (web3 as any).Connection(RPC_URL, { commitment: process.env.MIN_FINALITY_COMMITMENT || "finalized" });
   const cfg = await fetchConfig((web3 as any), connection, programPk);
   if (cfg.chain_id !== CHAIN_ID) {
     return res.status(400).json({ error: { code: "ChainIdMismatch", message: `env CHAIN_ID=${CHAIN_ID} != on-chain ${cfg.chain_id}`, details: null } });
@@ -215,8 +245,8 @@ app.post("/anchor", async (req: Request, res: Response) => {
   try {
     // Prepare real args per spec
     const artifact_id_bytes = uuidToBytes(String(artifact.artifact_id || "")) || uuidToBytes(randomUUID());
-    const state_root_before = hexTo32(String(artifact.state_root_before || ""));
-    const state_root_after = hexTo32(String(artifact.state_root_after || ""));
+    const state_root_before = hexTo32(normalizeHex32(String(artifact.state_root_before || "")));
+    const state_root_after = hexTo32(normalizeHex32(String(artifact.state_root_after || "")));
     const timestamp = BigInt(Math.floor(Date.now() / 1000));
     const txid = await submitAnchorProof({
       rpcUrl: RPC_URL,
@@ -518,6 +548,55 @@ function uuidToBytes(u: string): Uint8Array {
     return new Uint8Array(Buffer.from(randomUUID().replace(/-/g, ""), "hex"));
   }
   return new Uint8Array(Buffer.from(hex, "hex"));
+}
+
+function normalizeHex32(s: string): string {
+  if (!isHex32(s)) throw new Error("invalid 32-byte hex");
+  return s.toLowerCase();
+}
+
+function uuidFromHash32(hash: Uint8Array): string {
+  const b = Buffer.from(hash.subarray(0, 16));
+  b[6] = (b[6] & 0x0f) | 0x40; // version 4
+  b[8] = (b[8] & 0x3f) | 0x80; // variant 10xx
+  const hex = b.toString("hex");
+  return `${hex.slice(0,8)}-${hex.slice(8,12)}-${hex.slice(12,16)}-${hex.slice(16,20)}-${hex.slice(20)}`;
+}
+
+async function loadArtifactFromDisk(artifactId: string): Promise<(Artifact & { proof_hash?: string }) | null> {
+  try {
+    const p = await findFileRecursive(ARTIFACT_DIR, `${artifactId}.json`, 4);
+    if (!p) return null;
+    const raw = await fsp.readFile(p, { encoding: "utf8" });
+    const obj = JSON.parse(raw) as Artifact;
+    return { ...obj };
+  } catch (_) {
+    return null;
+  }
+}
+
+async function findFileRecursive(dir: string, fileName: string, maxDepth: number): Promise<string | null> {
+  if (maxDepth < 0) return null;
+  const entries = await fsp.readdir(dir, { withFileTypes: true }).catch(() => [] as any);
+  for (const e of entries) {
+    const p = path.join(dir, e.name);
+    if (e.isFile() && e.name === fileName) return p;
+    if (e.isDirectory()) {
+      const f = await findFileRecursive(p, fileName, maxDepth - 1);
+      if (f) return f;
+    }
+  }
+  return null;
+}
+
+async function fetchLastSeq(web3: any, connection: any, programId: any): Promise<bigint> {
+  const pda = web3.PublicKey.findProgramAddressSync([Buffer.from("zksl"), Buffer.from("aggregator")], programId)[0];
+  const acc = await connection.getAccountInfo(pda, { commitment: process.env.MIN_FINALITY_COMMITMENT || "finalized" });
+  if (!acc) return 0n;
+  const data: Buffer = acc.data as Buffer;
+  let off = 8 + 32; // skip discriminator + aggregator_pubkey
+  const lastSeq = data.readBigUInt64LE(off);
+  return lastSeq;
 }
 
 
