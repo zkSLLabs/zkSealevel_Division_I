@@ -70,25 +70,25 @@ async function main() {
       const web3 = await import("@solana/web3.js");
       const programIdStr = process.env.PROGRAM_ID_VALIDATOR_LOCK || "";
       if (!programIdStr) throw new Error("PROGRAM_ID_VALIDATOR_LOCK is required");
-      const conn = new (web3 as any).Connection(process.env.RPC_URL || "http://localhost:8899", { commitment: process.env.MIN_FINALITY_COMMITMENT || "finalized" });
-      const programId = new (web3 as any).PublicKey(programIdStr);
-      const zkslMint = new (web3 as any).PublicKey(opts.mint);
+      const conn = new web3.Connection(process.env.RPC_URL || "http://localhost:8899", { commitment: process.env.MIN_FINALITY_COMMITMENT || "finalized" });
+      const programId = new web3.PublicKey(programIdStr);
+      const zkslMint = new web3.PublicKey(opts.mint);
       // Detect token program (Token or Token-2022) from mint owner
       const mintAcc = await conn.getAccountInfo(zkslMint);
       if (!mintAcc) throw new Error("Mint account not found");
-      const tokenProgramId = new (web3 as any).PublicKey(mintAcc.owner);
-      const payer = readKeypair(opts.keypair, web3);
+      const tokenProgramId = new web3.PublicKey(mintAcc.owner);
+      const payer = await readKeypair(opts.keypair);
 
-      const configPda = (web3 as any).PublicKey.findProgramAddressSync([Buffer.from("zksl"), Buffer.from("config")], programId)[0];
-      const validatorRecordPda = (web3 as any).PublicKey.findProgramAddressSync([Buffer.from("zksl"), Buffer.from("validator"), payer.publicKey.toBytes()], programId)[0];
-      const escrowAuthorityPda = (web3 as any).PublicKey.findProgramAddressSync([Buffer.from("zksl"), Buffer.from("escrow"), payer.publicKey.toBytes()], programId)[0];
-      const ASSOCIATED_TOKEN_PROGRAM_ID = new (web3 as any).PublicKey("ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL");
-      const validatorAta = (web3 as any).PublicKey.findProgramAddressSync([
+      const configPda = web3.PublicKey.findProgramAddressSync([Buffer.from("zksl"), Buffer.from("config")], programId)[0];
+      const validatorRecordPda = web3.PublicKey.findProgramAddressSync([Buffer.from("zksl"), Buffer.from("validator"), payer.publicKey.toBytes()], programId)[0];
+      const escrowAuthorityPda = web3.PublicKey.findProgramAddressSync([Buffer.from("zksl"), Buffer.from("escrow"), payer.publicKey.toBytes()], programId)[0];
+      const ASSOCIATED_TOKEN_PROGRAM_ID = new web3.PublicKey("ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL");
+      const validatorAta = web3.PublicKey.findProgramAddressSync([
         payer.publicKey.toBytes(),
         tokenProgramId.toBytes(),
         zkslMint.toBytes(),
       ], ASSOCIATED_TOKEN_PROGRAM_ID)[0];
-      const escrowAta = (web3 as any).PublicKey.findProgramAddressSync([
+      const escrowAta = web3.PublicKey.findProgramAddressSync([
         escrowAuthorityPda.toBytes(),
         tokenProgramId.toBytes(),
         zkslMint.toBytes(),
@@ -108,18 +108,18 @@ async function main() {
         { pubkey: ASSOCIATED_TOKEN_PROGRAM_ID, isSigner: false, isWritable: false },
         { pubkey: (web3 as any).SystemProgram.programId, isSigner: false, isWritable: false },
       ];
-      const ix = new (web3 as any).TransactionInstruction({ keys, programId, data });
+      const ix = new web3.TransactionInstruction({ keys, programId, data });
       const computeIx = (web3 as any).ComputeBudgetProgram?.setComputeUnitLimit
-        ? (web3 as any).ComputeBudgetProgram.setComputeUnitLimit({ units: 200_000 })
+        ? web3.ComputeBudgetProgram.setComputeUnitLimit({ units: 200_000 })
         : null;
-      const tx = new (web3 as any).Transaction();
+      const tx = new web3.Transaction();
       if (computeIx) tx.add(computeIx);
       tx.add(ix);
       const bh = await conn.getLatestBlockhash();
       tx.recentBlockhash = bh.blockhash;
       tx.feePayer = payer.publicKey;
       tx.sign(payer);
-      const sig = await (web3 as any).sendAndConfirmTransaction(conn, tx, [payer], { commitment: process.env.MIN_FINALITY_COMMITMENT || "finalized" });
+      const sig = await web3.sendAndConfirmTransaction(conn, tx, [payer], { commitment: process.env.MIN_FINALITY_COMMITMENT || "finalized" });
       // eslint-disable-next-line no-console
       console.log(JSON.stringify({ txid: sig }, null, 2));
     });
@@ -131,24 +131,24 @@ async function main() {
       const web3 = await import("@solana/web3.js");
       const programIdStr = process.env.PROGRAM_ID_VALIDATOR_LOCK || "";
       if (!programIdStr) throw new Error("PROGRAM_ID_VALIDATOR_LOCK is required");
-      const conn = new (web3 as any).Connection(process.env.RPC_URL || "http://localhost:8899", { commitment: process.env.MIN_FINALITY_COMMITMENT || "finalized" });
-      const programId = new (web3 as any).PublicKey(programIdStr);
-      const zkslMint = new (web3 as any).PublicKey(opts.mint);
+      const conn = new web3.Connection(process.env.RPC_URL || "http://localhost:8899", { commitment: process.env.MIN_FINALITY_COMMITMENT || "finalized" });
+      const programId = new web3.PublicKey(programIdStr);
+      const zkslMint = new web3.PublicKey(opts.mint);
       const mintAcc = await conn.getAccountInfo(zkslMint);
       if (!mintAcc) throw new Error("Mint account not found");
-      const tokenProgramId = new (web3 as any).PublicKey(mintAcc.owner);
-      const payer = readKeypair(opts.keypair, web3);
+      const tokenProgramId = new web3.PublicKey(mintAcc.owner);
+      const payer = await readKeypair(opts.keypair);
 
-      const configPda = (web3 as any).PublicKey.findProgramAddressSync([Buffer.from("zksl"), Buffer.from("config")], programId)[0];
-      const validatorRecordPda = (web3 as any).PublicKey.findProgramAddressSync([Buffer.from("zksl"), Buffer.from("validator"), payer.publicKey.toBytes()], programId)[0];
-      const escrowAuthorityPda = (web3 as any).PublicKey.findProgramAddressSync([Buffer.from("zksl"), Buffer.from("escrow"), payer.publicKey.toBytes()], programId)[0];
-      const ASSOCIATED_TOKEN_PROGRAM_ID = new (web3 as any).PublicKey("ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL");
-      const validatorAta = (web3 as any).PublicKey.findProgramAddressSync([
+      const configPda = web3.PublicKey.findProgramAddressSync([Buffer.from("zksl"), Buffer.from("config")], programId)[0];
+      const validatorRecordPda = web3.PublicKey.findProgramAddressSync([Buffer.from("zksl"), Buffer.from("validator"), payer.publicKey.toBytes()], programId)[0];
+      const escrowAuthorityPda = web3.PublicKey.findProgramAddressSync([Buffer.from("zksl"), Buffer.from("escrow"), payer.publicKey.toBytes()], programId)[0];
+      const ASSOCIATED_TOKEN_PROGRAM_ID = new web3.PublicKey("ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL");
+      const validatorAta = web3.PublicKey.findProgramAddressSync([
         payer.publicKey.toBytes(),
         tokenProgramId.toBytes(),
         zkslMint.toBytes(),
       ], ASSOCIATED_TOKEN_PROGRAM_ID)[0];
-      const escrowAta = (web3 as any).PublicKey.findProgramAddressSync([
+      const escrowAta = web3.PublicKey.findProgramAddressSync([
         escrowAuthorityPda.toBytes(),
         tokenProgramId.toBytes(),
         zkslMint.toBytes(),
@@ -166,18 +166,18 @@ async function main() {
         { pubkey: validatorAta, isSigner: false, isWritable: true },
         { pubkey: tokenProgramId, isSigner: false, isWritable: false },
       ];
-      const ix = new (web3 as any).TransactionInstruction({ keys, programId, data });
+      const ix = new web3.TransactionInstruction({ keys, programId, data });
       const computeIx = (web3 as any).ComputeBudgetProgram?.setComputeUnitLimit
-        ? (web3 as any).ComputeBudgetProgram.setComputeUnitLimit({ units: 200_000 })
+        ? web3.ComputeBudgetProgram.setComputeUnitLimit({ units: 200_000 })
         : null;
-      const tx = new (web3 as any).Transaction();
+      const tx = new web3.Transaction();
       if (computeIx) tx.add(computeIx);
       tx.add(ix);
       const bh = await conn.getLatestBlockhash();
       tx.recentBlockhash = bh.blockhash;
       tx.feePayer = payer.publicKey;
       tx.sign(payer);
-      const sig = await (web3 as any).sendAndConfirmTransaction(conn, tx, [payer], { commitment: process.env.MIN_FINALITY_COMMITMENT || "finalized" });
+      const sig = await web3.sendAndConfirmTransaction(conn, tx, [payer], { commitment: process.env.MIN_FINALITY_COMMITMENT || "finalized" });
       // eslint-disable-next-line no-console
       console.log(JSON.stringify({ txid: sig }, null, 2));
     });
@@ -192,10 +192,10 @@ async function main() {
       const fs = require("node:fs");
       const programIdStr = process.env.PROGRAM_ID_VALIDATOR_LOCK || "";
       if (!programIdStr) throw new Error("PROGRAM_ID_VALIDATOR_LOCK is required");
-      const conn = new (web3 as any).Connection(process.env.RPC_URL || "http://localhost:8899", { commitment: process.env.MIN_FINALITY_COMMITMENT || "finalized" });
-      const programId = new (web3 as any).PublicKey(programIdStr);
-      const zkslMint = new (web3 as any).PublicKey(opts.mint);
-      const payer = readKeypair(opts.keypair, web3);
+      const conn = new web3.Connection(process.env.RPC_URL || "http://localhost:8899", { commitment: process.env.MIN_FINALITY_COMMITMENT || "finalized" });
+      const programId = new web3.PublicKey(programIdStr);
+      const zkslMint = new web3.PublicKey(opts.mint);
+      const payer = await readKeypair(opts.keypair);
 
       // Read aggregator secret (hex 64 bytes) and derive pubkey
       const raw = fs.readFileSync(opts["aggKey"], { encoding: "utf8" });
@@ -208,7 +208,7 @@ async function main() {
       const activationSeq = BigInt(1);
       const chainId = BigInt(opts.chainId ? String(opts.chainId) : (process.env.CHAIN_ID || "1"));
 
-      const configPda = (web3 as any).PublicKey.findProgramAddressSync([Buffer.from("zksl"), Buffer.from("config")], programId)[0];
+      const configPda = web3.PublicKey.findProgramAddressSync([Buffer.from("zksl"), Buffer.from("config")], programId)[0];
 
       // encode initialize(InitializeArgs)
       const disc = sha256_8("global:initialize");
@@ -230,14 +230,14 @@ async function main() {
         { pubkey: (web3 as any).SystemProgram.programId, isSigner: false, isWritable: false },
       ];
 
-      const ix = new (web3 as any).TransactionInstruction({ keys, programId, data });
-      const tx = new (web3 as any).Transaction();
+      const ix = new web3.TransactionInstruction({ keys, programId, data });
+      const tx = new web3.Transaction();
       tx.add(ix);
       const bh = await conn.getLatestBlockhash();
       tx.recentBlockhash = bh.blockhash;
       tx.feePayer = payer.publicKey;
       tx.sign(payer);
-      const sig = await (web3 as any).sendAndConfirmTransaction(conn, tx, [payer], { commitment: process.env.MIN_FINALITY_COMMITMENT || "finalized" });
+      const sig = await web3.sendAndConfirmTransaction(conn, tx, [payer], { commitment: process.env.MIN_FINALITY_COMMITMENT || "finalized" });
       // eslint-disable-next-line no-console
       console.log(JSON.stringify({ txid: sig }, null, 2));
     });
@@ -251,12 +251,13 @@ main().catch((e) => {
   process.exit(1);
 });
 
-function readKeypair(path: string, web3: any): any {
+async function readKeypair(path: string) {
   const fs = require("node:fs");
+  const web3 = await import("@solana/web3.js");
   const raw = fs.readFileSync(path, { encoding: "utf8" });
   const arr = JSON.parse(raw);
   const secret = Uint8Array.from(arr);
-  return (web3 as any).Keypair.fromSecretKey(secret);
+  return web3.Keypair.fromSecretKey(secret);
 }
 
 function u64le(n: bigint): Buffer {

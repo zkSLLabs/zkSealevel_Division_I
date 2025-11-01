@@ -126,6 +126,63 @@ app.get("/health", (_req: Request, res: Response) => {
   res.json({ status: "ok", version: "0.1.0" });
 });
 
+// POST /prove: build canonical artifact and persist (stubbed prover integration)
+app.post("/prove", async (req: Request, res: Response) => {
+  const artifact = req.body as Artifact;
+  if (!artifact || typeof artifact !== "object") {
+    return res.status(400).json({ error: { code: "BadRequest", message: "invalid artifact", details: null } });
+  }
+  if (
+    typeof artifact.start_slot !== "number" ||
+    typeof artifact.end_slot !== "number" ||
+    typeof artifact.state_root_before !== "string" ||
+    typeof artifact.state_root_after !== "string" ||
+    !isHex32(artifact.state_root_before) ||
+    !isHex32(artifact.state_root_after)
+  ) {
+    return res.status(400).json({ error: { code: "BadRequest", message: "missing or invalid fields", details: { required: ["start_slot","end_slot","state_root_before","state_root_after"] } } });
+  }
+  if (artifact.end_slot < artifact.start_slot) {
+    return res.status(400).json({ error: { code: "BadRequest", message: "end_slot must be >= start_slot", details: null } });
+  }
+  const window = artifact.end_slot - artifact.start_slot + 1;
+  if (window > 2048) {
+    return res.status(400).json({ error: { code: "BadRequest", message: "slot window exceeds MAX_SLOTS_PER_ARTIFACT", details: { max: 2048 } } });
+  }
+  const srb = normalizeHex32(artifact.state_root_before);
+  const sra = normalizeHex32(artifact.state_root_after);
+  const minimal = canonicalize({
+    start_slot: artifact.start_slot,
+    end_slot: artifact.end_slot,
+    state_root_before: srb,
+    state_root_after: sra,
+  });
+  const proofHashBytes = Buffer.from(blake3hash(Buffer.from(minimal, "utf8")));
+  const proofHashHex = Buffer.from(proofHashBytes).toString("hex");
+  const artifactId = uuidFromHash32(proofHashBytes);
+  const canonical = canonicalize({
+    artifact_id: artifactId,
+    start_slot: artifact.start_slot,
+    end_slot: artifact.end_slot,
+    state_root_before: srb,
+    state_root_after: sra,
+  });
+  const now = new Date();
+  const y = String(now.getUTCFullYear());
+  const m = String(now.getUTCMonth() + 1).padStart(2, "0");
+  const d = String(now.getUTCDate()).padStart(2, "0");
+  const dir = path.join(ARTIFACT_DIR, y, m, d);
+  await ensureDir(dir);
+  const target = path.join(dir, `${artifactId}.json`);
+  const artifact_len = Buffer.byteLength(canonical, "utf8");
+  if (artifact_len > 512 * 1024) {
+    return res.status(400).json({ error: { code: "BadRequest", message: "artifact exceeds MAX_ARTIFACT_SIZE_BYTES", details: { max: 512 * 1024 } } });
+  }
+  await fsp.writeFile(target, Buffer.from(canonical, "utf8"));
+  artifacts.set(artifactId, { artifact_id: artifactId, start_slot: artifact.start_slot, end_slot: artifact.end_slot, state_root_before: srb, state_root_after: sra, artifact_len, proof_hash: proofHashHex });
+  res.json({ artifact_id: artifactId, proof_hash: proofHashHex });
+});
+
 // POST /artifact: accept canonical artifact JSON, compute proof_hash
 app.post("/artifact", async (req: Request, res: Response) => {
   const artifact = req.body as Artifact;
@@ -212,14 +269,12 @@ app.post("/anchor", async (req: Request, res: Response) => {
   });
   const proofHash = blake3hash(Buffer.from(minimal, "utf8"));
   const web3 = await import("@solana/web3.js");
-  const programPk = new (web3 as any).PublicKey(PROGRAM_ID);
   // Read aggregator state and compute next seq
-  const connection = new (web3 as any).Connection(RPC_URL, { commitment: process.env.MIN_FINALITY_COMMITMENT || "finalized" });
-  const seq = (await fetchLastSeq((web3 as any), connection, programPk)) + 1n;
+  const seq = (await fetchLastSeq(PROGRAM_ID, RPC_URL)) + 1n;
   const startSlot = BigInt(artifact.start_slot ?? 1);
   const endSlot = BigInt(artifact.end_slot ?? 1);
   // Fetch on-chain config and enforce CHAIN_ID match
-  const cfg = await fetchConfig((web3 as any), connection, programPk);
+  const cfg = await fetchConfig(PROGRAM_ID, RPC_URL);
   if (cfg.chain_id !== CHAIN_ID) {
     return res.status(400).json({ error: { code: "ChainIdMismatch", message: `env CHAIN_ID=${CHAIN_ID} != on-chain ${cfg.chain_id}`, details: null } });
   }
@@ -227,14 +282,14 @@ app.post("/anchor", async (req: Request, res: Response) => {
   const allowedAgg = seq >= cfg.activation_seq ? cfg.next_aggregator_pubkey : cfg.aggregator_pubkey;
   const { ds, dsHash } = buildDS({
     chainId: CHAIN_ID,
-    programId: programPk.toBytes(),
+    programId: new web3.PublicKey(PROGRAM_ID).toBytes(),
     proofHash,
     startSlot,
     endSlot,
     seq,
   });
   const secretKey = loadAggregatorSecret();
-  const aggKeypair = (nacl as any).sign.keyPair.fromSecretKey(secretKey);
+  const aggKeypair = nacl.sign.keyPair.fromSecretKey(secretKey);
   const aggPub = new Uint8Array(aggKeypair.publicKey);
   if (!bytesEq(aggPub, allowedAgg)) {
     return res.status(400).json({ error: { code: "AggregatorKeyMismatch", message: "aggregator secret does not match allowed aggregator_pubkey", details: null } });
@@ -250,7 +305,7 @@ app.post("/anchor", async (req: Request, res: Response) => {
     const timestamp = BigInt(Math.floor(Date.now() / 1000));
     const txid = await submitAnchorProof({
       rpcUrl: RPC_URL,
-      programId: programPk,
+      programIdStr: PROGRAM_ID,
       ds,
       dsHash,
       proofHash,
@@ -307,7 +362,7 @@ app.listen(PORT, () => {
 // ============== Solana TX submission (Ed25519 preflight + ComputeBudget) ==============
 async function submitAnchorProof(params: {
   rpcUrl: string;
-  programId: any;
+  programIdStr: string;
   ds: Uint8Array;
   dsHash: Uint8Array;
   proofHash: Uint8Array;
@@ -324,13 +379,13 @@ async function submitAnchorProof(params: {
 }): Promise<string> {
   // Lazy import to avoid hard type coupling to local shims
   const web3 = await import("@solana/web3.js");
-  const connection = new (web3 as any).Connection(params.rpcUrl, {
+  const connection = new web3.Connection(params.rpcUrl, {
     commitment: process.env.MIN_FINALITY_COMMITMENT || "finalized",
   });
-  const payer = (web3 as any).Keypair.fromSecretKey(params.aggregatorSecretKey);
+  const payer = web3.Keypair.fromSecretKey(params.aggregatorSecretKey);
 
-  const computeIx = (web3 as any).ComputeBudgetProgram.setComputeUnitLimit({ units: 200_000 });
-  const ed25519Ix = (web3 as any).Ed25519Program.createInstructionWithPublicKey({
+  const computeIx = web3.ComputeBudgetProgram.setComputeUnitLimit({ units: 200_000 });
+  const ed25519Ix = web3.Ed25519Program.createInstructionWithPublicKey({
     publicKey: payer.publicKey.toBytes(),
     message: Buffer.from(params.ds),
     signature: nacl.sign.detached(params.ds, params.aggregatorSecretKey),
@@ -356,29 +411,30 @@ async function submitAnchorProof(params: {
     dsHash32,
   });
 
-  const configPda = (web3 as any).PublicKey.findProgramAddressSync(
+  const programId = new web3.PublicKey(params.programIdStr);
+  const configPda = web3.PublicKey.findProgramAddressSync(
     [Buffer.from("zksl"), Buffer.from("config")],
-    params.programId,
+    programId,
   )[0];
 
-  const aggregatorStatePda = (web3 as any).PublicKey.findProgramAddressSync(
+  const aggregatorStatePda = web3.PublicKey.findProgramAddressSync(
     [Buffer.from("zksl"), Buffer.from("aggregator")],
-    params.programId,
+    programId,
   )[0];
 
-  const rangeStatePda = (web3 as any).PublicKey.findProgramAddressSync(
+  const rangeStatePda = web3.PublicKey.findProgramAddressSync(
     [Buffer.from("zksl"), Buffer.from("range")],
-    params.programId,
+    programId,
   )[0];
 
-  const proofRecordPda = (web3 as any).PublicKey.findProgramAddressSync(
+  const proofRecordPda = web3.PublicKey.findProgramAddressSync(
     [Buffer.from("zksl"), Buffer.from("proof"), proofHash32, seqLe],
-    params.programId,
+    programId,
   )[0];
 
-  const validatorRecordPda = (web3 as any).PublicKey.findProgramAddressSync(
+  const validatorRecordPda = web3.PublicKey.findProgramAddressSync(
     [Buffer.from("zksl"), Buffer.from("validator"), payer.publicKey.toBytes()],
-    params.programId,
+    programId,
   )[0];
 
   const keys = [
@@ -393,8 +449,8 @@ async function submitAnchorProof(params: {
     { pubkey: (web3 as any).SystemProgram.programId, isSigner: false, isWritable: false },
   ];
 
-  const ix = new (web3 as any).TransactionInstruction({ keys, programId: params.programId, data });
-  const tx = new (web3 as any).Transaction();
+  const ix = new web3.TransactionInstruction({ keys, programId, data });
+  const tx = new web3.Transaction();
   tx.add(computeIx);
   tx.add(ed25519Ix); // must be immediately before anchor ix
   tx.add(ix);
@@ -507,12 +563,15 @@ async function ensureDir(dir: string): Promise<void> {
 }
 
 // ============== On-chain Config helpers ==============
-async function fetchConfig(web3: any, connection: any, programId: any): Promise<{
+async function fetchConfig(programIdStr: string, rpcUrl: string): Promise<{
   aggregator_pubkey: Uint8Array;
   next_aggregator_pubkey: Uint8Array;
   activation_seq: bigint;
   chain_id: bigint;
 }> {
+  const web3 = await import("@solana/web3.js");
+  const programId = new web3.PublicKey(programIdStr);
+  const connection = new web3.Connection(rpcUrl, { commitment: process.env.MIN_FINALITY_COMMITMENT || "finalized" });
   const pda = web3.PublicKey.findProgramAddressSync([Buffer.from("zksl"), Buffer.from("config")], programId)[0];
   const acc = await connection.getAccountInfo(pda, { commitment: process.env.MIN_FINALITY_COMMITMENT || "finalized" });
   if (!acc) throw new Error("config account not found");
@@ -590,7 +649,10 @@ async function findFileRecursive(dir: string, fileName: string, maxDepth: number
   return null;
 }
 
-async function fetchLastSeq(web3: any, connection: any, programId: any): Promise<bigint> {
+async function fetchLastSeq(programIdStr: string, rpcUrl: string): Promise<bigint> {
+  const web3 = await import("@solana/web3.js");
+  const programId = new web3.PublicKey(programIdStr);
+  const connection = new web3.Connection(rpcUrl, { commitment: process.env.MIN_FINALITY_COMMITMENT || "finalized" });
   const pda = web3.PublicKey.findProgramAddressSync([Buffer.from("zksl"), Buffer.from("aggregator")], programId)[0];
   const acc = await connection.getAccountInfo(pda, { commitment: process.env.MIN_FINALITY_COMMITMENT || "finalized" });
   if (!acc) return 0n;
