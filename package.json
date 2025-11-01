@@ -7,7 +7,8 @@
     "build:services": "npm --prefix orchestrator ci && npm --prefix orchestrator run build && npm --prefix indexer ci && npm --prefix indexer run build",
     "test:orchestrator": "npm --prefix orchestrator run test",
     "test:kats": "npm run kats:all",
-    "test:all": "npm run test:orchestrator && npm run test:kats"
+    "test:all": "npm run test:orchestrator && npm run test:kats",
+    "conformance": "node scripts/conformance.js"
   },
   "dependencies": {
     "blake3": "^2.1.9"
