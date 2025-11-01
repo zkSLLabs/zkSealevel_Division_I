@@ -196,6 +196,95 @@ docker-compose build
 docker-compose up -d
 ```
 
+### Devnet Deployment Quickstart
+
+1. Program deployment and ID alignment
+   - Build and deploy the Anchor program to Devnet:
+     ```bash
+     anchor build
+     anchor keys list
+     anchor deploy --provider.cluster devnet
+     ```
+   - Copy the deployed program ID into `programs/validator_lock/src/lib.rs` `declare_id!("<DEVNET_PROGRAM_ID>")` and rebuild if needed.
+   - Set `.env` for all services (see `env.example`):
+     ```bash
+     PROGRAM_ID_VALIDATOR_LOCK=<DEVNET_PROGRAM_ID>
+     RPC_URL=https://api.devnet.solana.com
+     WS_URL=wss://api.devnet.solana.com
+     CHAIN_ID=103
+     AGGREGATOR_KEYPAIR_PATH=./keys/aggregator.json
+     ARTIFACT_DIR=./orchestrator/data/artifacts
+     DATABASE_URL=postgres://postgres:postgres@localhost:5432/zksl
+     MIN_FINALITY_COMMITMENT=finalized
+     ```
+
+2. Configure aggregator key and initialize on-chain `Config`
+   - Create `./keys/aggregator.json` with a 64-byte hex `secretKey`:
+     ```json
+     { "secretKey": "<64-hex-bytes: seed+key>" }
+     ```
+   - Initialize the program config (admin = payer):
+     ```bash
+     npx tsx cli/src/main.ts init-config \
+       --keypair <PAYER_KEYPAIR.json> \
+       --mint <ZKSL_MINT_PUBKEY> \
+       --agg-key ./keys/aggregator.json \
+       --chain-id 103
+     ```
+
+3. Register a validator (lock exactly 1 `zKSL` token)
+   - Ensure validator ATA holds exactly 1 token (respecting mint decimals).
+   - Register:
+     ```bash
+     npx tsx cli/src/main.ts register \
+       --keypair <VALIDATOR_KEYPAIR.json> \
+       --mint <ZKSL_MINT_PUBKEY>
+     ```
+
+4. Start services
+   - Orchestrator:
+     ```bash
+     npm --prefix orchestrator run build && node orchestrator/dist/server.js
+     # or: npx tsx orchestrator/src/server.ts
+     ```
+   - Indexer:
+     ```bash
+     npm --prefix indexer run build && node indexer/dist/index.js
+     # or: npx tsx indexer/src/index.ts
+     ```
+
+5. Create and anchor a proof artifact
+   - Create canonical artifact (either path works):
+     ```bash
+     # via /prove (recommended)
+     curl -s -X POST http://localhost:8080/prove \
+       -H 'Idempotency-Key: qk-1' \
+       -H 'Content-Type: application/json' \
+       -d '{"start_slot":1,"end_slot":64,"state_root_before":"<64hex>","state_root_after":"<64hex>"}'
+
+     # or via /artifact
+     curl -s -X POST http://localhost:8080/artifact \
+       -H 'Idempotency-Key: qk-2' \
+       -H 'Content-Type: application/json' \
+       -d '{"start_slot":1,"end_slot":64,"state_root_before":"<64hex>","state_root_after":"<64hex>"}'
+     ```
+   - Anchor it:
+     ```bash
+     curl -s -X POST http://localhost:8080/anchor \
+       -H 'Idempotency-Key: qk-3' \
+       -H 'Content-Type: application/json' \
+       -d '{"artifact_id":"<ARTIFACT_ID_FROM_PREVIOUS>"}'
+     ```
+
+6. Observe state
+   - Query orchestrator: `GET /proof/:artifact_id` and `GET /validator/:pubkey`.
+   - Check DB: `proofs` table should contain a row with `commitment_level >= 1` after reconciliation.
+
+Notes
+- Transaction order is strictly enforced on-chain: `ComputeBudget → Ed25519 → anchor_proof`.
+- DS is 110 bytes with the exact layout from the Execution Plan; `ds_hash = blake3(DS)`.
+- Determinism: artifacts are canonicalized, hex fields lowercased, file layout `ARTIFACT_DIR/YYYY/MM/DD/{artifact_id}.json`.
+
 ## Usage Examples
 
 ### CLI Commands
