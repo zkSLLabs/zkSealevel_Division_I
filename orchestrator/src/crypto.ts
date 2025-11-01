@@ -62,4 +62,58 @@ export function uuidFromHash32(hash: Uint8Array): string {
   return `${hex.slice(0,8)}-${hex.slice(8,12)}-${hex.slice(12,16)}-${hex.slice(16,20)}-${hex.slice(20)}`;
 }
 
+export function sha256_8(s: string): Buffer {
+  const crypto = require("node:crypto");
+  const h = crypto.createHash("sha256").update(s, "utf8").digest();
+  return h.subarray(0, 8);
+}
+
+export function u64le(n: bigint): Buffer {
+  const b = Buffer.alloc(8);
+  b.writeBigUInt64LE(n);
+  return b;
+}
+
+export function i64le(n: bigint): Buffer {
+  const b = Buffer.alloc(8);
+  b.writeBigInt64LE(n);
+  return b;
+}
+
+export function u32le(n: number): Buffer {
+  const b = Buffer.alloc(4);
+  b.writeUInt32LE(n >>> 0);
+  return b;
+}
+
+export function encodeAnchorProofArgsBorsh(params: {
+  artifactId: Uint8Array;
+  startLe: Buffer;
+  endLe: Buffer;
+  proofHash32: Buffer;
+  artifactLen: number;
+  stateRootBefore: Uint8Array;
+  stateRootAfter: Uint8Array;
+  aggregatorPubkey: Uint8Array;
+  timestampLe: Buffer;
+  seqLe: Buffer;
+  dsHash32: Buffer;
+}): Buffer {
+  const disc = sha256_8("global:anchor_proof");
+  const payload = Buffer.concat([
+    Buffer.from(params.artifactId),
+    params.startLe,
+    params.endLe,
+    params.proofHash32,
+    u32le(params.artifactLen),
+    Buffer.from(params.stateRootBefore),
+    Buffer.from(params.stateRootAfter),
+    Buffer.from(params.aggregatorPubkey),
+    params.timestampLe,
+    params.seqLe,
+    params.dsHash32,
+  ]);
+  return Buffer.concat([disc, payload]);
+}
+
 
