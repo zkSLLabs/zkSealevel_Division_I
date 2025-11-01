@@ -79,20 +79,20 @@ async function main() {
       const tokenProgramId = new web3.PublicKey(mintAcc.owner);
       const payer = await readKeypair(opts.keypair);
 
-      const configPda = web3.PublicKey.findProgramAddressSync([Buffer.from("zksl"), Buffer.from("config")], programId)[0];
-      const validatorRecordPda = web3.PublicKey.findProgramAddressSync([Buffer.from("zksl"), Buffer.from("validator"), payer.publicKey.toBytes()], programId)[0];
-      const escrowAuthorityPda = web3.PublicKey.findProgramAddressSync([Buffer.from("zksl"), Buffer.from("escrow"), payer.publicKey.toBytes()], programId)[0];
+      const [configPda] = await web3.PublicKey.findProgramAddress([Buffer.from("zksl"), Buffer.from("config")], programId);
+      const [validatorRecordPda] = await web3.PublicKey.findProgramAddress([Buffer.from("zksl"), Buffer.from("validator"), payer.publicKey.toBytes()], programId);
+      const [escrowAuthorityPda] = await web3.PublicKey.findProgramAddress([Buffer.from("zksl"), Buffer.from("escrow"), payer.publicKey.toBytes()], programId);
       const ASSOCIATED_TOKEN_PROGRAM_ID = new web3.PublicKey("ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL");
-      const validatorAta = web3.PublicKey.findProgramAddressSync([
+      const [validatorAta] = await web3.PublicKey.findProgramAddress([
         payer.publicKey.toBytes(),
         tokenProgramId.toBytes(),
         zkslMint.toBytes(),
-      ], ASSOCIATED_TOKEN_PROGRAM_ID)[0];
-      const escrowAta = web3.PublicKey.findProgramAddressSync([
+      ], ASSOCIATED_TOKEN_PROGRAM_ID);
+      const [escrowAta] = await web3.PublicKey.findProgramAddress([
         escrowAuthorityPda.toBytes(),
         tokenProgramId.toBytes(),
         zkslMint.toBytes(),
-      ], ASSOCIATED_TOKEN_PROGRAM_ID)[0];
+      ], ASSOCIATED_TOKEN_PROGRAM_ID);
 
       const discriminator = sha256_8("global:register_validator");
       const data = discriminator; // no args
@@ -139,20 +139,20 @@ async function main() {
       const tokenProgramId = new web3.PublicKey(mintAcc.owner);
       const payer = await readKeypair(opts.keypair);
 
-      const configPda = web3.PublicKey.findProgramAddressSync([Buffer.from("zksl"), Buffer.from("config")], programId)[0];
-      const validatorRecordPda = web3.PublicKey.findProgramAddressSync([Buffer.from("zksl"), Buffer.from("validator"), payer.publicKey.toBytes()], programId)[0];
-      const escrowAuthorityPda = web3.PublicKey.findProgramAddressSync([Buffer.from("zksl"), Buffer.from("escrow"), payer.publicKey.toBytes()], programId)[0];
+      const [configPda] = await web3.PublicKey.findProgramAddress([Buffer.from("zksl"), Buffer.from("config")], programId);
+      const [validatorRecordPda] = await web3.PublicKey.findProgramAddress([Buffer.from("zksl"), Buffer.from("validator"), payer.publicKey.toBytes()], programId);
+      const [escrowAuthorityPda] = await web3.PublicKey.findProgramAddress([Buffer.from("zksl"), Buffer.from("escrow"), payer.publicKey.toBytes()], programId);
       const ASSOCIATED_TOKEN_PROGRAM_ID = new web3.PublicKey("ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL");
-      const validatorAta = web3.PublicKey.findProgramAddressSync([
+      const [validatorAta] = await web3.PublicKey.findProgramAddress([
         payer.publicKey.toBytes(),
         tokenProgramId.toBytes(),
         zkslMint.toBytes(),
-      ], ASSOCIATED_TOKEN_PROGRAM_ID)[0];
-      const escrowAta = web3.PublicKey.findProgramAddressSync([
+      ], ASSOCIATED_TOKEN_PROGRAM_ID);
+      const [escrowAta] = await web3.PublicKey.findProgramAddress([
         escrowAuthorityPda.toBytes(),
         tokenProgramId.toBytes(),
         zkslMint.toBytes(),
-      ], ASSOCIATED_TOKEN_PROGRAM_ID)[0];
+      ], ASSOCIATED_TOKEN_PROGRAM_ID);
 
       const discriminator = sha256_8("global:unlock_validator");
       const data = discriminator; // no args
@@ -208,7 +208,7 @@ async function main() {
       const activationSeq = BigInt(1);
       const chainId = BigInt(opts.chainId ? String(opts.chainId) : (process.env.CHAIN_ID || "1"));
 
-      const configPda = web3.PublicKey.findProgramAddressSync([Buffer.from("zksl"), Buffer.from("config")], programId)[0];
+      const [configPda] = await web3.PublicKey.findProgramAddress([Buffer.from("zksl"), Buffer.from("config")], programId);
 
       // encode initialize(InitializeArgs)
       const disc = sha256_8("global:initialize");
