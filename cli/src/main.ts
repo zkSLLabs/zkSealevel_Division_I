@@ -1,5 +1,4 @@
-// eslint-disable-next-line @typescript-eslint/no-var-requires
-const dotenv = require("dotenv");
+import dotenv from "dotenv";
 dotenv.config({ path: process.cwd() + "/.env" });
 
 import { Command } from "commander";
@@ -25,13 +24,42 @@ async function main() {
     .description("zkSealevel CLI")
     .version("0.1.0");
 
+  // Prove via orchestrator (/prove): minimal inputs
   program.command("prove")
-    .requiredOption("--input <PATH>")
-    .requiredOption("--out <PATH>")
-    .action(async () => {
-      // Placeholder; real prover steps via Rust binary
+    .requiredOption("--start <U64>")
+    .requiredOption("--end <U64>")
+    .requiredOption("--srb <HEX32>")
+    .requiredOption("--sra <HEX32>")
+    .action(async (opts) => {
+      const base = process.env.ORCH_URL || "http://localhost:8080";
+      const body = {
+        start_slot: Number(opts.start),
+        end_slot: Number(opts.end),
+        state_root_before: String(opts.srb),
+        state_root_after: String(opts.sra),
+      };
+      const resp = await postJson(`${base}/prove`, body, randomUUID());
       // eslint-disable-next-line no-console
-      console.log("prove stub");
+      console.log(JSON.stringify(resp, null, 2));
+    });
+
+  // Create artifact via orchestrator (/artifact)
+  program.command("artifact")
+    .requiredOption("--start <U64>")
+    .requiredOption("--end <U64>")
+    .requiredOption("--srb <HEX32>")
+    .requiredOption("--sra <HEX32>")
+    .action(async (opts) => {
+      const base = process.env.ORCH_URL || "http://localhost:8080";
+      const body = {
+        start_slot: Number(opts.start),
+        end_slot: Number(opts.end),
+        state_root_before: String(opts.srb),
+        state_root_after: String(opts.sra),
+      };
+      const resp = await postJson(`${base}/artifact`, body, randomUUID());
+      // eslint-disable-next-line no-console
+      console.log(JSON.stringify(resp, null, 2));
     });
 
   program.command("anchor")
