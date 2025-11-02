@@ -4,29 +4,9 @@ dotenv.config({ path: process.cwd() + "/.env" });
 import { Client as PgClient } from "pg";
 import * as web3 from "@solana/web3.js";
 import * as bs58 from "bs58";
+import { decodeProofRecord, decodeValidatorRecord, DecodedProofRecord, DecodedValidatorRecord } from "./codec.js";
 
-interface DecodedProofRecord {
-  artifact_id: string;
-  start_slot: bigint;
-  end_slot: bigint;
-  proof_hash: Buffer;
-  artifact_len: number;
-  state_root_before: Buffer;
-  state_root_after: Buffer;
-  submitted_by: string;
-  aggregator_pubkey: string;
-  timestamp: bigint;
-  seq: bigint;
-  ds_hash: Buffer;
-}
-
-interface DecodedValidatorRecord {
-  pubkey: string;
-  escrow: string;
-  lock_ts: number;
-  status: "Active" | "Unlocked";
-  num_accepts: string;
-}
+// types and decode functions moved to codec.ts for testability
 
 async function main(): Promise<void> {
   const databaseUrl = process.env.DATABASE_URL || "postgres://postgres:postgres@localhost:5432/zksl";
@@ -95,35 +75,7 @@ async function scanOnce(params: { connection: web3.Connection; programId: web3.P
   } catch (_) {}
 }
 
-function decodeProofRecord(data: Buffer): DecodedProofRecord {
-  let o = 8; // skip discriminator
-  const artifactId = data.subarray(o, o + 16); o += 16;
-  const start = data.readBigUInt64LE(o); o += 8;
-  const end = data.readBigUInt64LE(o); o += 8;
-  const proofHash = data.subarray(o, o + 32); o += 32;
-  const artLen = data.readUInt32LE(o); o += 4;
-  const srb = data.subarray(o, o + 32); o += 32;
-  const sra = data.subarray(o, o + 32); o += 32;
-  const submittedBy = bs58.encode(data.subarray(o, o + 32)); o += 32;
-  const aggregator = bs58.encode(data.subarray(o, o + 32)); o += 32;
-  const ts = data.readBigInt64LE(o); o += 8;
-  const seq = data.readBigUInt64LE(o); o += 8;
-  const dsHash = data.subarray(o, o + 32); o += 32;
-  return {
-    artifact_id: uuidFrom16(artifactId),
-    start_slot: start,
-    end_slot: end,
-    proof_hash: Buffer.from(proofHash),
-    artifact_len: artLen,
-    state_root_before: Buffer.from(srb),
-    state_root_after: Buffer.from(sra),
-    submitted_by: submittedBy,
-    aggregator_pubkey: aggregator,
-    timestamp: ts,
-    seq,
-    ds_hash: Buffer.from(dsHash),
-  };
-}
+// decodeProofRecord is imported
 
 async function firstSignatureForAddress(connection: web3.Connection, address: web3.PublicKey): Promise<string> {
   const sigs = await connection.getSignaturesForAddress(address, { limit: 1 }, "confirmed");
@@ -172,10 +124,7 @@ function sha256_8(s: string): Buffer {
   return h.subarray(0, 8);
 }
 
-function uuidFrom16(b: Buffer): string {
-  const hex = b.toString("hex");
-  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
-}
+// uuidFrom16 moved to codec.ts
 
 function sleep(ms: number): Promise<void> { return new Promise((r) => setTimeout(r, ms)); }
 
@@ -232,16 +181,7 @@ async function updateLastSignature(pg: PgClient, sig: string): Promise<void> {
   await pg.query(`UPDATE indexer_state SET last_signature = $1 WHERE id = 1`, [sig]);
 }
 
-function decodeValidatorRecord(data: Buffer): DecodedValidatorRecord {
-  let o = 8; // skip discriminator
-  const validator = bs58.encode(data.subarray(o, o + 32)); o += 32;
-  const escrow = bs58.encode(data.subarray(o, o + 32)); o += 32;
-  const lock_ts = Number(data.readBigInt64LE(o)); o += 8;
-  const status_u8 = data.readUInt8(o); o += 1;
-  const status = status_u8 === 0 ? "Active" : "Unlocked";
-  const num_accepts = data.readBigUInt64LE(o).toString(); o += 8;
-  return { pubkey: validator, escrow, lock_ts, status, num_accepts };
-}
+// decodeValidatorRecord is imported
 
 async function upsertValidator(pg: PgClient, v: DecodedValidatorRecord): Promise<void> {
   await pg.query(
