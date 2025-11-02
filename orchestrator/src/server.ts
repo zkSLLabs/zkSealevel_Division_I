@@ -10,6 +10,7 @@ import * as path from "node:path";
 import { Client as PgClient } from "pg";
 import { encodeAnchorProofArgsBorsh, i64le, u64le } from "./crypto.js";
 import { mapProgramError } from "./errors.js";
+import { fetchConfig, fetchLastSeq } from "./onchain.js";
 
 dotenv.config({ path: process.cwd() + "/.env" });
 
@@ -360,6 +361,8 @@ app.listen(PORT, () => {
   // eslint-disable-next-line no-console
   console.log(`orchestrator listening on :${PORT}`);
 });
+
+export { app };
 
 // ============== Solana TX submission (Ed25519 preflight + ComputeBudget) ==============
 async function submitAnchorProof(params: {
