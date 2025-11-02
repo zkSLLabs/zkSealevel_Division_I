@@ -5,6 +5,7 @@ import { Client as PgClient } from "pg";
 import * as web3 from "@solana/web3.js";
 import * as bs58 from "bs58";
 import { decodeProofRecord, decodeValidatorRecord, DecodedProofRecord, DecodedValidatorRecord } from "./codec.js";
+import { upsertProof, upsertValidator, updateLastSignature } from "./db.js";
 
 // types and decode functions moved to codec.ts for testability
 
@@ -90,33 +91,6 @@ async function commitmentOfSig(connection: web3.Connection, sig: string): Promis
   return cs === "finalized" ? 2 : cs === "confirmed" ? 1 : 0;
 }
 
-async function upsertProof(pg: PgClient, p: DecodedProofRecord & { txid: string; commitment_level: number }): Promise<void> {
-  await pg.query(
-    `INSERT INTO proofs (
-      artifact_id, start_slot, end_slot, proof_hash, ds_hash, artifact_len, state_root_before, state_root_after,
-      submitted_by, aggregator_pubkey, ts, seq, commitment_level, txid
-     ) VALUES (
-      $1, $2, $3, $4, $5, $6, $7, $8,
-      $9, $10, to_timestamp($11), $12, $13, $14
-     ) ON CONFLICT (proof_hash, seq) DO UPDATE SET commitment_level = EXCLUDED.commitment_level`,
-    [
-      p.artifact_id,
-      p.start_slot.toString(),
-      p.end_slot.toString(),
-      p.proof_hash,
-      p.ds_hash,
-      p.artifact_len,
-      p.state_root_before,
-      p.state_root_after,
-      p.submitted_by,
-      p.aggregator_pubkey,
-      Number(p.timestamp),
-      p.seq.toString(),
-      p.commitment_level,
-      p.txid,
-    ],
-  );
-}
 
 function sha256_8(s: string): Buffer {
   const crypto = require("node:crypto");
@@ -177,20 +151,10 @@ async function reconcilePending(params: { connection: web3.Connection; pg: PgCli
   await pg.query(`UPDATE indexer_state SET last_reconciled_ts = NOW() WHERE id = 1`);
 }
 
-async function updateLastSignature(pg: PgClient, sig: string): Promise<void> {
-  await pg.query(`UPDATE indexer_state SET last_signature = $1 WHERE id = 1`, [sig]);
-}
 
 // decodeValidatorRecord is imported
 
-async function upsertValidator(pg: PgClient, v: DecodedValidatorRecord): Promise<void> {
-  await pg.query(
-    `INSERT INTO validators(pubkey, status, escrow, lock_ts, num_accepts, last_seen)
-     VALUES ($1, $2, $3, to_timestamp($4), $5, NOW())
-     ON CONFLICT (pubkey) DO UPDATE SET status = EXCLUDED.status, num_accepts = EXCLUDED.num_accepts, last_seen = NOW()`,
-    [v.pubkey, v.status, v.escrow, v.lock_ts, v.num_accepts],
-  );
-}
+// db helpers imported
 
 main().catch((e) => {
   // eslint-disable-next-line no-console
