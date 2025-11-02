@@ -53,10 +53,10 @@ jobs:
 
       - name: Rust clippy (prover)
         run: |
-          cargo clippy -p zksl-prover --all-targets -- -D warnings
+          cargo clippy -p zksl-prover --all-targets -- -D warnings -W clippy::pedantic -W clippy::nursery -W clippy::cargo
 
       - name: Rust clippy (validator_lock program)
         run: |
           cd programs/validator_lock
-          cargo clippy --all-targets -- -D warnings
+          cargo clippy --all-targets -- -D warnings -W clippy::pedantic -W clippy::nursery -W clippy::cargo
 
