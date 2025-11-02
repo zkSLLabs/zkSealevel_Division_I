@@ -8,7 +8,9 @@
     "test:orchestrator": "npm --prefix orchestrator run test",
     "test:kats": "npm run kats:all",
     "test:all": "npm run test:orchestrator && npm --prefix indexer run test && npm run test:kats",
-    "conformance": "node scripts/conformance.js"
+    "conformance": "node scripts/conformance.js",
+    "devnet:keys": "node scripts/gen_aggregator_key.js",
+    "devnet:runbook": "powershell -ExecutionPolicy Bypass -File scripts/devnet_runbook.ps1"
   },
   "dependencies": {
     "blake3": "^2.1.9"
