@@ -33,6 +33,9 @@ jobs:
       - name: Lint orchestrator
         run: npm --prefix orchestrator run lint
 
+      - name: Lint indexer
+        run: npm --prefix indexer run lint
+
       - name: Run JS tests (orchestrator + indexer + KATs)
         run: npm run test:all
 

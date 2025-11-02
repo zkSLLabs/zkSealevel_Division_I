@@ -28,6 +28,11 @@ describe("crypto primitives", () => {
     expect(normalizeHex32(h)).toBe("a".repeat(64));
   });
 
+  it("normalizeHex32 throws on invalid hex", () => {
+    expect(() => normalizeHex32("z".repeat(64))).toThrow();
+    expect(() => normalizeHex32("0f".repeat(31))).toThrow();
+  });
+
   it("uuidFromHash32 sets version 4 and variant 10xx", () => {
     const zero32 = new Uint8Array(32);
     const u = uuidFromHash32(zero32);
