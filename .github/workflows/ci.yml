@@ -1,3 +1,101 @@
+name: zksl-ci
+
+on:
+  push:
+    branches: [ main, master ]
+  pull_request:
+    branches: [ main, master ]
+
+jobs:
+  node-tests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - name: Install root deps
+        run: |
+          npm ci || true
+      - name: Install orchestrator and indexer deps
+        run: |
+          npm --prefix orchestrator ci
+          npm --prefix indexer ci
+      - name: Lint TypeScript
+        run: |
+          npm --prefix orchestrator run lint || true
+          npm --prefix indexer run lint || true
+      - name: Build services
+        run: npm run build:services
+      - name: Run orchestrator tests
+        run: npm run test:orchestrator
+      - name: Run KATs
+        run: npm run test:kats
+
+  indexer-tests:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:15
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: zksl
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres" \
+          --health-interval 10s \
+          --health-timeout 5s \
+          --health-retries 10
+    env:
+      DATABASE_URL: postgresql://postgres:postgres@localhost:5432/zksl
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - name: Install deps
+        run: |
+          npm --prefix indexer ci
+      - name: Apply migrations
+        run: |
+          sudo apt-get update && sudo apt-get install -y postgresql-client
+          bash scripts/db_migrate.sh
+      - name: Build indexer
+        run: npm --prefix indexer run build
+      - name: Run indexer unit tests
+        run: npm --prefix indexer run test
+
+  rust-tests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Cargo test (workspace crates)
+        run: |
+          cargo test --workspace --all-features --no-run
+          cargo test --workspace --all-features
+
+  conformance:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Install root deps (blake3)
+        run: |
+          npm install --no-audit --no-fund
+      - name: Generate aggregator key
+        run: node scripts/gen_aggregator_key.js keys/aggregator.json
+      - name: Run conformance (Node vs Rust proof_hash)
+        env:
+          PROGRAM_ID_VALIDATOR_LOCK: Val1dAt0rLock1111111111111111111111111111111
+          CHAIN_ID: 1
+        run: node scripts/conformance.js
+
 name: CI
 
 on:

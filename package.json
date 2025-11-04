@@ -13,7 +13,7 @@
     "devnet:runbook": "powershell -ExecutionPolicy Bypass -File scripts/devnet_runbook.ps1"
   },
   "dependencies": {
-    "blake3": "^2.1.9"
+    "blake3": "^2.1.7"
   },
   "engines": { "node": ">=20 <21" }
 }

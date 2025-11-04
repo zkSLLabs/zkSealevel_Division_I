@@ -86,3 +86,9 @@ Thumbs.db
 .anchor/
 *.pid
 *~
+ 
+# =====================
+# Local validator artifacts
+# =====================
+test-ledger/
+**/test-ledger/

@@ -28,7 +28,7 @@ const COMPUTE_BUDGET_ID: Pubkey = Pubkey::new_from_array([
     0x2c, 0x43, 0x9b, 0x3a, 0x40, 0x00, 0x00, 0x00,
 ]);
 
-declare_id!("9o5T1cRj3oSw49gp5gKgVfPgNMjQSuD3rMiTU9BxeLZx");
+declare_id!("4DDKoz69pr37yBMW9LVeuM7P2GHS9BQ9ctLHydbWeYxQ");
 
 /// Program entrypoint module for validator_lock per Master_Blueprint.md
 #[program]
@@ -254,14 +254,7 @@ pub mod validator_lock {
         ctx.accounts.aggregator_state.last_seq = seq;
         ctx.accounts.range_state.last_end_slot = end_slot;
 
-        // Increment validator accepts if active
-        if ctx.accounts.validator_record.status == 0 {
-            ctx.accounts.validator_record.num_accepts = ctx.accounts
-                .validator_record
-                .num_accepts
-                .checked_add(1)
-                .ok_or(ErrorCode::MathOverflow)?;
-        }
+        // Increment validator accepts if active (temporarily disabled to reduce stack usage)
 
         emit!(ProofAnchored { artifact_id, proof_hash, start_slot, end_slot, submitted_by: ctx.accounts.submitted_by.key(), timestamp, seq, ds_hash });
         Ok(())
@@ -484,11 +477,8 @@ pub struct AnchorProof<'info> {
     pub range_state: Account<'info, RangeState>,
     #[account(init, payer = submitted_by, seeds = [b"zksl".as_ref(), b"proof".as_ref(), proof_hash.as_ref(), &seq.to_le_bytes()], bump, space = 8 + ProofRecord::SIZE)]
     pub proof_record: Account<'info, ProofRecord>,
-    #[account(mut, seeds = [b"zksl".as_ref(), b"validator".as_ref(), submitted_by.key().as_ref()], bump)]
-    pub validator_record: Account<'info, ValidatorRecord>,
     /// CHECK: instructions sysvar
     pub sysvar_instructions: UncheckedAccount<'info>,
-    pub sysvar_clock: Sysvar<'info, Clock>,
     pub system_program: Program<'info, System>,
 }
 

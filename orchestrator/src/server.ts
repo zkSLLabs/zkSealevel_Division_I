@@ -357,10 +357,13 @@ app.get("/validator/:pubkey", async (req: Request, res: Response) => {
   res.json({ validator: row.rows[0] });
 });
 
-app.listen(PORT, () => {
-  // eslint-disable-next-line no-console
-  console.log(`orchestrator listening on :${PORT}`);
-});
+// Avoid binding a real port when running under vitest or NODE_ENV=test
+if (!process.env.VITEST && process.env.NODE_ENV !== "test") {
+  app.listen(PORT, () => {
+    // eslint-disable-next-line no-console
+    console.log(`orchestrator listening on :${PORT}`);
+  });
+}
 
 export { app };
 
@@ -502,34 +505,7 @@ async function ensureDir(dir: string): Promise<void> {
   }
 }
 
-// ============== On-chain Config helpers ==============
-async function fetchConfig(programIdStr: string, rpcUrl: string): Promise<{
-  aggregator_pubkey: Uint8Array;
-  next_aggregator_pubkey: Uint8Array;
-  activation_seq: bigint;
-  chain_id: bigint;
-}> {
-  const web3 = await import("@solana/web3.js");
-  const programId = new web3.PublicKey(programIdStr);
-  const connection = new web3.Connection(rpcUrl, { commitment: process.env.MIN_FINALITY_COMMITMENT || "finalized" });
-  const pda = web3.PublicKey.findProgramAddressSync([Buffer.from("zksl"), Buffer.from("config")], programId)[0];
-  const acc = await connection.getAccountInfo(pda, { commitment: process.env.MIN_FINALITY_COMMITMENT || "finalized" });
-  if (!acc) throw new Error("config account not found");
-  // Decode per struct layout; skip discriminator (8 bytes)
-  const data: Buffer = acc.data;
-  let off = 8 + 32 + 32; // zksl_mint + admin
-  const aggregator_pubkey = data.subarray(off, off + 32); off += 32;
-  const next_aggregator_pubkey = data.subarray(off, off + 32); off += 32;
-  const activation_seq = data.readBigUInt64LE(off); off += 8;
-  const chain_id = data.readBigUInt64LE(off); off += 8;
-  // paused (1), bump (1), reserved (14) follow; not needed here
-  return {
-    aggregator_pubkey: new Uint8Array(aggregator_pubkey),
-    next_aggregator_pubkey: new Uint8Array(next_aggregator_pubkey),
-    activation_seq,
-    chain_id,
-  };
-}
+// ============== On-chain Config helpers are imported from ./onchain.ts ==============
 
 // ============== Utils ==============
 function isHex32(s: string): boolean { return /^[0-9a-fA-F]{64}$/.test(s); }
@@ -589,17 +565,6 @@ async function findFileRecursive(dir: string, fileName: string, maxDepth: number
   return null;
 }
 
-async function fetchLastSeq(programIdStr: string, rpcUrl: string): Promise<bigint> {
-  const web3 = await import("@solana/web3.js");
-  const programId = new web3.PublicKey(programIdStr);
-  const connection = new web3.Connection(rpcUrl, { commitment: process.env.MIN_FINALITY_COMMITMENT || "finalized" });
-  const pda = web3.PublicKey.findProgramAddressSync([Buffer.from("zksl"), Buffer.from("aggregator")], programId)[0];
-  const acc = await connection.getAccountInfo(pda, { commitment: process.env.MIN_FINALITY_COMMITMENT || "finalized" });
-  if (!acc) return 0n;
-  const data: Buffer = acc.data as Buffer;
-  let off = 8 + 32; // skip discriminator + aggregator_pubkey
-  const lastSeq = data.readBigUInt64LE(off);
-  return lastSeq;
-}
+// fetchLastSeq is imported from ./onchain.ts
 
 

@@ -21,8 +21,25 @@ Require anchor
 Write-Host "[zksl][devnet] Setting Solana RPC: $RpcUrl"
 solana config set --url $RpcUrl | Out-Null
 
-Write-Host "[zksl][devnet] Building Anchor program"
-anchor build
+if (-not $env:HOME) { $env:HOME = $env:USERPROFILE }
+if (-not $env:CARGO_TARGET_DIR) { $env:CARGO_TARGET_DIR = Join-Path $env:USERPROFILE "t" }
+
+Write-Host "[zksl][devnet] Preparing Cargo lockfiles for Solana toolchain"
+if (Test-Path "programs/$ProgramName/Cargo.lock") {
+  Remove-Item -Force "programs/$ProgramName/Cargo.lock"
+}
+
+Push-Location "programs/$ProgramName"
+Write-Host "[zksl][devnet] Generating Cargo.lock (v3) with Solana toolchain"
+cargo +solana generate-lockfile
+Write-Host "[zksl][devnet] Pinning transitive crates for Solana MSRV"
+cargo +solana update -p proc-macro-crate@3.4.0 --precise 3.2.0
+cargo +solana update -p indexmap --precise 2.11.4
+cargo +solana update -p toml_edit --precise 0.22.27
+Pop-Location
+
+Write-Host "[zksl][devnet] Building Anchor program (skip IDL)"
+anchor build --no-idl
 
 Write-Host "[zksl][devnet] Deploying program to Devnet"
 anchor deploy --provider.cluster devnet
@@ -36,7 +53,7 @@ Write-Host "[zksl][devnet] Program ID: $progId"
 Write-Host "[zksl][devnet] Updating declare_id! in programs/$ProgramName/src/lib.rs"
 $libPath = Join-Path "programs/$ProgramName/src" "lib.rs"
 $content = Get-Content -Raw $libPath
-$updated = ($content -replace 'declare_id!\("[^"]+"\);', "declare_id!(\"$progId\");")
+$updated = ($content -replace 'declare_id!\("[^"]+"\);', "declare_id!(`"$progId`");")
 if ($updated -ne $content) {
   Set-Content -NoNewline -Path $libPath -Value $updated
   Write-Host "[zksl][devnet] Updated declare_id!. Rebuilding..."

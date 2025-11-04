@@ -19,7 +19,8 @@ async function main(): Promise<void> {
   await pg.connect();
 
   const programId = new web3.PublicKey(programIdStr);
-  const connection = new web3.Connection(rpcUrl, { commitment: process.env.MIN_FINALITY_COMMITMENT || "finalized" });
+  const commitment = (process.env.MIN_FINALITY_COMMITMENT as web3.Commitment) || ("finalized" as web3.Commitment);
+  const connection = new web3.Connection(rpcUrl, { commitment });
 
   const prDisc = sha256_8("account:ProofRecord");
   const vrDisc = sha256_8("account:ValidatorRecord");

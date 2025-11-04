@@ -53,7 +53,7 @@ function main() {
   const outPath = path.join(tmpDir, "proof.json");
   fs.writeFileSync(inPath, JSON.stringify(artifact));
   const rust = spawnSync("cargo", [
-    "run", "-p", "prover", "--",
+    "run", "--manifest-path", "prover/Cargo.toml", "--",
     "--input", inPath,
     "--out", outPath,
     "--agg-key", agg,
