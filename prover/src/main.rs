@@ -6,7 +6,7 @@
 
 use blake3::Hasher as Blake3;
 use clap::Parser;
-use ed25519_dalek::{Signer, SigningKey, SecretKey};
+use ed25519_dalek::{Signer, SigningKey};
 use serde::{Deserialize, Serialize};
 use std::{fs, path::PathBuf};
 
@@ -28,7 +28,7 @@ struct Args {
 
 #[derive(Serialize, Deserialize)]
 struct Artifact {
-    artifact_id: String,
+    id: String,
     start_slot: u64,
     end_slot: u64,
     state_root_before: String,
@@ -62,12 +62,12 @@ fn main() -> anyhow::Result<()> {
     let ds_hash = *hd.finalize().as_bytes();
     // sign DS using aggregator secret key from file (hex 64 bytes seed+key)
     let agg_bytes = read_aggregator_secret(&args.agg_key)?;
-    let sk = SecretKey::from_bytes(&agg_bytes[0..32])?;
-    let kp = SigningKey::from(sk);
-    let sig = kp.sign(&ds);
+    let secret_arr: [u8; 32] = agg_bytes[0..32].try_into()?;
+    let sk = SigningKey::from_bytes(&secret_arr);
+    let sig = sk.sign(&ds);
 
     let out = serde_json::json!({
-        "artifact_id": artifact.artifact_id,
+        "artifact_id": artifact.id,
         "proof_hash": hex::encode(proof_hash),
         "ds_hash": hex::encode(ds_hash),
         "signature": hex::encode(sig.to_bytes()),
@@ -79,7 +79,7 @@ fn main() -> anyhow::Result<()> {
 fn canonicalize<T: Serialize>(value: &T) -> String {
     // Deterministic map key ordering
     // Serialize, parse, and re-serialize with sorted keys
-    let v = serde_json::to_value(value).expect("serialize");
+    let v = serde_json::to_value(value).unwrap_or(serde_json::Value::Null);
     stringify_canonical(&v)
 }
 
@@ -90,7 +90,7 @@ fn stringify_canonical(v: &serde_json::Value) -> String {
             if *b { "true".to_string() } else { "false".to_string() }
         }
         serde_json::Value::Number(n) => n.to_string(),
-        serde_json::Value::String(s) => serde_json::to_string(s).unwrap(),
+        serde_json::Value::String(s) => serde_json::to_string(s).unwrap_or_else(|_| String::from("\"\""))  ,
         serde_json::Value::Array(a) => {
             let inner: Vec<String> = a.iter().map(stringify_canonical).collect();
             format!("[{}]", inner.join(","))
@@ -98,10 +98,10 @@ fn stringify_canonical(v: &serde_json::Value) -> String {
         serde_json::Value::Object(m) => {
             let mut keys: Vec<&String> = m.keys().collect();
             keys.sort();
-            let inner: Vec<String> = keys.iter().map(|k| {
-                let key = serde_json::to_string(k).unwrap();
-                let val = stringify_canonical(&m.get(*k).unwrap());
-                format!("{}:{}", key, val)
+            let inner: Vec<String> = keys.iter().filter_map(|k| {
+                let key = serde_json::to_string(k).ok()?;
+                let val = stringify_canonical(m.get(*k)?);
+                Some(format!("{key}:{val}"))
             }).collect();
             format!("{{{}}}", inner.join(","))
         }

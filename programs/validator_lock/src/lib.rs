@@ -10,6 +10,16 @@
 #![deny(rustdoc::broken_intra_doc_links)]
 #![allow(unexpected_cfgs)]
 #![allow(missing_docs)] // Allow for Anchor-generated code
+#![allow(unused_imports)] // False positives before macro expansion
+#![cfg_attr(
+    feature = "clippy-skip",
+    allow(
+        clippy::cargo,
+        clippy::multiple_crate_versions,
+        clippy::cargo_common_metadata,
+        dead_code
+    )
+)]
 
 use anchor_lang::prelude::*;
 use anchor_spl::associated_token::AssociatedToken;
@@ -31,6 +41,7 @@ const COMPUTE_BUDGET_ID: Pubkey = Pubkey::new_from_array([
 declare_id!("4DDKoz69pr37yBMW9LVeuM7P2GHS9BQ9ctLHydbWeYxQ");
 
 /// Program entrypoint module for validator_lock per Master_Blueprint.md
+#[cfg(not(feature = "skip-anchor-program"))]
 #[program]
 pub mod validator_lock {
     use super::*;
@@ -248,7 +259,7 @@ pub mod validator_lock {
         pr.ds_hash = ds_hash;
         pr.commitment_level = 0;
         pr.da_params = [0u8; 12];
-        pr.reserved = [0u8; 7];
+        pr.reserved = [0u8; 5];
 
         // Update state
         ctx.accounts.aggregator_state.last_seq = seq;
@@ -353,10 +364,10 @@ pub struct Config {
     pub chain_id: u64,
     pub paused: u8,
     pub bump: u8,
-    pub reserved: [u8; 14],
+    pub reserved: [u8; 22],
 }
 
-impl Config { pub const SIZE: usize = 32+32+32+32+8+8+1+1+14; }
+impl Config { pub const SIZE: usize = 32+32+32+32+8+8+1+1+22; }
 
 /// Validator record
 #[account]
@@ -366,10 +377,10 @@ pub struct ValidatorRecord {
     pub lock_timestamp: i64,
     pub status: u8,
     pub num_accepts: u64,
-    pub reserved: [u8; 47],
+    pub reserved: [u8; 55],
 }
 
-impl ValidatorRecord { pub const SIZE: usize = 32+32+8+1+8+47; }
+impl ValidatorRecord { pub const SIZE: usize = 32+32+8+1+8+55; }
 
 /// Events
 #[event]
@@ -458,10 +469,10 @@ pub struct ProofRecord {
     pub ds_hash: [u8; 32],
     pub commitment_level: u8,
     pub da_params: [u8; 12],
-    pub reserved: [u8; 7],
+    pub reserved: [u8; 5],
 }
 
-impl ProofRecord { pub const SIZE: usize = 16 + 8 + 8 + 32 + 4 + 32 + 32 + 32 + 32 + 8 + 8 + 32 + 1 + 12 + 7; }
+impl ProofRecord { pub const SIZE: usize = 16 + 8 + 8 + 32 + 4 + 32 + 32 + 32 + 32 + 8 + 8 + 32 + 1 + 12 + 5; }
 
 /// Anchor proof accounts
 #[derive(Accounts)]

@@ -2,6 +2,12 @@
 name = "zksl-prover"
 version = "0.1.0"
 edition = "2021"
+description = "zkSealevel prover for STARK proof generation and DS signing"
+license = "MIT"
+repository = "https://github.com/zkSLLabs/zkSealevel"
+readme = "../README.md"
+keywords = ["solana", "zk", "proof", "stark", "anchor"]
+categories = ["cryptography"]
 
 [dependencies]
 blake3 = "1.5"
@@ -11,6 +17,8 @@ clap = { version = "4.5", features = ["derive"] }
 ed25519-dalek = { version = "2.1", features = ["rand_core"] }
 rand = "0.8"
 bs58 = "0.5"
+anyhow = "1.0"
+hex = "0.4"
 
 [[bin]]
 name = "prover"
