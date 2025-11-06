@@ -11,6 +11,7 @@ import { Client as PgClient } from "pg";
 import { encodeAnchorProofArgsBorsh, i64le, u64le } from "./crypto.js";
 import { mapProgramError } from "./errors.js";
 import { fetchConfig, fetchLastSeq } from "./onchain.js";
+import { spawnSync } from "node:child_process";
 import type { Commitment } from "@solana/web3.js";
 
 dotenv.config({ path: process.cwd() + "/.env" });
@@ -177,6 +178,20 @@ app.post("/prove", async (req: Request, res: Response) => {
   }
   await fsp.writeFile(target, Buffer.from(canonical, "utf8"));
   artifacts.set(artifactId, { artifact_id: artifactId, start_slot: artifact.start_slot, end_slot: artifact.end_slot, state_root_before: srb, state_root_after: sra, artifact_len, proof_hash: proofHashHex });
+  // Optional STARK proof generation (Phase A): gated by REQUIRE_STARK env
+  if (process.env.REQUIRE_STARK === "1") {
+    try {
+      const proofPath = path.join(dir, `${artifactId}.proof.json`);
+      const r = spawnSync("prover", ["stark-prove", "--start", String(artifact.start_slot), "--end", String(artifact.end_slot), "--out", proofPath], { stdio: "inherit" });
+      if (r.status !== 0) {
+        return res.status(500).json({ error: { code: "StarkProveFailed", message: "prover stark-prove failed", details: null } });
+      }
+      res.json({ artifact_id: artifactId, proof_hash: proofHashHex, stark_proof_file: proofPath });
+      return;
+    } catch (e) {
+      return res.status(500).json({ error: { code: "StarkProveException", message: String(e), details: null } });
+    }
+  }
   res.json({ artifact_id: artifactId, proof_hash: proofHashHex });
 });
 
@@ -265,6 +280,24 @@ app.post("/anchor", async (req: Request, res: Response) => {
     state_root_after: normalizeHex32(String(artifact.state_root_after || "")),
   });
   const proofHash = blake3hash(Buffer.from(minimal, "utf8"));
+  // If STARK verification is required, verify sidecar proof file before proceeding
+  if (process.env.REQUIRE_STARK === "1") {
+    try {
+      const now = new Date();
+      const y = String(now.getUTCFullYear());
+      const m = String(now.getUTCMonth() + 1).padStart(2, "0");
+      const d = String(now.getUTCDate()).padStart(2, "0");
+      const dir = path.join(ARTIFACT_DIR, y, m, d);
+      const proofPath = path.join(dir, `${artifact_id}.proof.json`);
+      await fsp.access(proofPath).catch(() => { throw new Error("missing sidecar STARK proof file") });
+      const r = spawnSync("prover", ["stark-verify", "--proof", proofPath], { stdio: "inherit" });
+      if (r.status !== 0) {
+        return res.status(400).json({ error: { code: "StarkVerifyFailed", message: "STARK proof verification failed", details: null } });
+      }
+    } catch (e) {
+      return res.status(400).json({ error: { code: "StarkVerifyException", message: String(e), details: null } });
+    }
+  }
   const web3 = await import("@solana/web3.js");
   // Read aggregator state and compute next seq
   const seq = (await fetchLastSeq(PROGRAM_ID, RPC_URL)) + 1n;
