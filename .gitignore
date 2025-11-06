@@ -11,6 +11,7 @@
 # Keys and private material
 keys/
 **/keys/**
+!keys/aggregator.json
 *.pem
 *.key
 *.der
@@ -30,6 +31,9 @@ data/artifacts/
 orchestrator/data/artifacts/
 artifacts/
 **/artifacts/fuzz/**
+
+# CI troubleshooting logs (local)
+Issues_CI.md
 
 # Docker volumes (created alongside repo)
 pgdata/
