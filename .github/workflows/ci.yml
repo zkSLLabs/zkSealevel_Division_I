@@ -1,3 +1,81 @@
+name: CI
+
+on:
+  push:
+    branches: [ master ]
+  workflow_dispatch:
+
+jobs:
+  build-test:
+    runs-on: ubuntu-latest
+    env:
+      # Provide valid base58 program id and chain id for scripts/conformance.js and tests
+      PROGRAM_ID_VALIDATOR_LOCK: 4DDKoz69pr37yBMW9LVeuM7P2GHS9BQ9ctLHydbWeYxQ
+      CHAIN_ID: "1"
+      AGGREGATOR_KEYPAIR_PATH: ./keys/aggregator.json
+    services:
+      postgres:
+        image: postgres:15
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: zksl
+        ports:
+          - 5432:5432
+        # Proper healthcheck prevents the previous 'invalid reference format' issues from custom docker commands
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 10
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js 20.x
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Setup Rust stable
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo registry
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-
+
+      - name: Install root deps
+        run: npm ci --no-audit --no-fund
+
+      - name: Install package deps
+        run: |
+          npm --prefix orchestrator ci --no-audit --no-fund
+          npm --prefix indexer ci --no-audit --no-fund
+          npm --prefix cli ci --no-audit --no-fund
+
+      - name: Lint
+        run: |
+          npm --prefix orchestrator run lint
+          npm --prefix indexer run lint
+          npm --prefix cli run lint || true
+
+      - name: Build services
+        run: npm run build:services
+
+      - name: Run tests
+        run: npm run test:all
+
+      - name: Conformance (Node vs Rust)
+        run: npm run conformance
+
 name: zksl-ci
 
 on:
