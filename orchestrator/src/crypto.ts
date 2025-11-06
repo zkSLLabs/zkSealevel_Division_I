@@ -31,17 +31,17 @@ export function canonicalize(value: unknown): string {
   function stringifyCanonical(v: unknown): string {
     if (v === null) return "null";
     const t = typeof v;
-    if (t === "number" || t === "boolean" || t === "string") return JSON.stringify(v as never);
+    if (t === "number" || t === "boolean" || t === "string") return JSON.stringify(v);
     if (Array.isArray(v)) return "[" + (v as unknown[]).map(stringifyCanonical).join(",") + "]";
     if (t === "object") {
       const obj = v as Record<string, unknown>;
       const entries = Object.keys(obj)
-        .filter((k) => (obj as Record<string, unknown>)[k] !== undefined)
+        .filter((k) => obj[k] !== undefined && k !== "__proto__" && k !== "constructor" && k !== "prototype")
         .sort()
         .map((k) => JSON.stringify(k) + ":" + stringifyCanonical(obj[k]));
       return "{" + entries.join(",") + "}";
     }
-    return JSON.stringify(v as never);
+    return JSON.stringify(v);
   }
 }
 
@@ -63,7 +63,8 @@ export function uuidFromHash32(hash: Uint8Array): string {
 }
 
 export function sha256_8(s: string): Buffer {
-  const crypto = require("node:crypto");
+  // eslint-disable-next-line @typescript-eslint/no-require-imports, @typescript-eslint/no-var-requires
+  const crypto = require("node:crypto") as typeof import("node:crypto");
   const h = crypto.createHash("sha256").update(s, "utf8").digest();
   return h.subarray(0, 8);
 }

@@ -7,9 +7,13 @@ describe("canonicalize properties", () => {
   it("object key order does not change canonical output", () => {
     fc.assert(
       fc.property(fc.dictionary(fc.string(), fc.anything()), (obj) => {
-        const keys = Object.keys(obj);
-        const shuffled = keys.sort(() => Math.random() - 0.5).reduce((acc, k) => { acc[k] = obj[k]; return acc; }, {} as Record<string, unknown>);
-        expect(canonicalize(obj)).toBe(canonicalize(shuffled));
+        // Filter out prototype pollution keys (__proto__, constructor, prototype)
+        const safeObj = Object.keys(obj)
+          .filter((k) => !["__proto__", "constructor", "prototype"].includes(k))
+          .reduce((acc, k) => { acc[k] = obj[k]; return acc; }, {} as Record<string, unknown>);
+        const keys = Object.keys(safeObj);
+        const shuffled = keys.sort(() => Math.random() - 0.5).reduce((acc, k) => { acc[k] = safeObj[k]; return acc; }, {} as Record<string, unknown>);
+        expect(canonicalize(safeObj)).toBe(canonicalize(shuffled));
       })
     );
   });

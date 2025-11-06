@@ -58,7 +58,7 @@ function main() {
     "--out", outPath,
     "--agg-key", agg,
     "--chain-id", String(chainId),
-    "--program_id", String(programId),
+    "--program-id", String(programId),
     "--seq", "1",
   ], { stdio: "inherit" });
   if (rust.status !== 0) fatal("prover run failed");

@@ -28,7 +28,7 @@ struct Args {
 
 #[derive(Serialize, Deserialize)]
 struct Artifact {
-    id: String,
+    artifact_id: String,
     start_slot: u64,
     end_slot: u64,
     state_root_before: String,
@@ -67,7 +67,7 @@ fn main() -> anyhow::Result<()> {
     let sig = sk.sign(&ds);
 
     let out = serde_json::json!({
-        "artifact_id": artifact.id,
+        "artifact_id": artifact.artifact_id,
         "proof_hash": hex::encode(proof_hash),
         "ds_hash": hex::encode(ds_hash),
         "signature": hex::encode(sig.to_bytes()),

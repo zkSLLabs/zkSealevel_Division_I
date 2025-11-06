@@ -3,8 +3,7 @@ dotenv.config({ path: process.cwd() + "/.env" });
 
 import { Client as PgClient } from "pg";
 import * as web3 from "@solana/web3.js";
-import * as bs58 from "bs58";
-import { decodeProofRecord, decodeValidatorRecord, DecodedProofRecord, DecodedValidatorRecord } from "./codec.js";
+import { decodeProofRecord, decodeValidatorRecord } from "./codec.js";
 import { upsertProof, upsertValidator, updateLastSignature } from "./db.js";
 
 // types and decode functions moved to codec.ts for testability
@@ -28,7 +27,7 @@ async function main(): Promise<void> {
   // eslint-disable-next-line no-console
   console.log("indexer started");
   try {
-    await subscribeProgramAccounts({ connection, programId, prDisc, vrDisc, pg });
+    subscribeProgramAccounts({ connection, programId, prDisc, vrDisc, pg });
   } catch (e) {
     // eslint-disable-next-line no-console
     console.warn("ws subscribe failed, will continue with polling:", e);
@@ -46,10 +45,10 @@ async function scanOnce(params: { connection: web3.Connection; programId: web3.P
   await pg.query(`UPDATE indexer_state SET last_scan_ts = NOW() WHERE id = 1`);
   const accounts = await connection.getProgramAccounts(programId);
   const cur = await pg.query(`SELECT last_seen_slot FROM indexer_state WHERE id = 1`);
-  const lastSeen: bigint = cur.rows?.[0]?.last_seen_slot ? BigInt(cur.rows[0].last_seen_slot) : 0n;
+  const lastSeen: bigint = cur.rows?.[0]?.last_seen_slot != null ? BigInt(String(cur.rows[0].last_seen_slot)) : 0n;
   let maxSlot: bigint = lastSeen;
   for (const acc of accounts) {
-    const data: Buffer = acc.account.data as Buffer;
+    const data: Buffer = acc.account.data;
     const head = data.subarray(0, 8);
     if (head.equals(prDisc)) {
       const pr = decodeProofRecord(data);
@@ -69,12 +68,18 @@ async function scanOnce(params: { connection: web3.Connection; programId: web3.P
   try {
     const slot = await connection.getSlot();
     await pg.query(`UPDATE indexer_state SET last_seen_slot = $1 WHERE id = 1`, [slot.toString()]);
-  } catch (_) {}
+  } catch (err) {
+    // Ignore slot update errors
+    void err;
+  }
   try {
     if (maxSlot > lastSeen) {
       await pg.query(`UPDATE indexer_state SET last_seen_slot = $1 WHERE id = 1`, [maxSlot.toString()]);
     }
-  } catch (_) {}
+  } catch (err) {
+    // Ignore slot update errors
+    void err;
+  }
 }
 
 // decodeProofRecord is imported
@@ -94,7 +99,8 @@ async function commitmentOfSig(connection: web3.Connection, sig: string): Promis
 
 
 function sha256_8(s: string): Buffer {
-  const crypto = require("node:crypto");
+  // eslint-disable-next-line @typescript-eslint/no-require-imports, @typescript-eslint/no-var-requires
+  const crypto = require("node:crypto") as typeof import("node:crypto");
   const h = crypto.createHash("sha256").update(s, "utf8").digest();
   return h.subarray(0, 8);
 }
@@ -103,21 +109,26 @@ function sha256_8(s: string): Buffer {
 
 function sleep(ms: number): Promise<void> { return new Promise((r) => setTimeout(r, ms)); }
 
-async function subscribeProgramAccounts(params: { connection: web3.Connection; programId: web3.PublicKey; prDisc: Buffer; vrDisc: Buffer; pg: PgClient }): Promise<void> {
+function subscribeProgramAccounts(params: { connection: web3.Connection; programId: web3.PublicKey; prDisc: Buffer; vrDisc: Buffer; pg: PgClient }): void {
   const { connection, programId, prDisc, vrDisc, pg } = params;
-  const id = await connection.onProgramAccountChange(programId, async (info) => {
-    try {
-      const data: Buffer = info.accountInfo.data as Buffer;
-      const head = data.subarray(0, 8);
-      if (head.equals(prDisc)) {
-        const pr = decodeProofRecord(data);
-        const txid = ""; // unknown in push; poller will backfill txid
-        await upsertProof(pg, { ...pr, txid, commitment_level: 0 });
-      } else if (head.equals(vrDisc)) {
-        const vr = decodeValidatorRecord(data);
-        await upsertValidator(pg, vr);
+  const id = connection.onProgramAccountChange(programId, (info) => {
+    void (async () => {
+      try {
+        const data: Buffer = info.accountInfo.data;
+        const head = data.subarray(0, 8);
+        if (head.equals(prDisc)) {
+          const pr = decodeProofRecord(data);
+          const txid = ""; // unknown in push; poller will backfill txid
+          await upsertProof(pg, { ...pr, txid, commitment_level: 0 });
+        } else if (head.equals(vrDisc)) {
+          const vr = decodeValidatorRecord(data);
+          await upsertValidator(pg, vr);
+        }
+      } catch (err) {
+        // Swallow account change errors
+        void err;
       }
-    } catch (_) { /* swallow */ }
+    })();
   });
   // eslint-disable-next-line no-console
   console.log("ws subscription id:", id);
@@ -129,7 +140,8 @@ async function reconcilePending(params: { connection: web3.Connection; pg: PgCli
     `SELECT txid, extract(epoch from ts) AS ts_epoch FROM proofs WHERE commitment_level < 2 ORDER BY ts ASC LIMIT 100`,
   );
   if (!res.rows.length) return;
-  const txids: string[] = res.rows.map((r: any) => r.txid);
+  const rows = res.rows as Array<{ txid: string }>;
+  const txids: string[] = rows.map((r) => r.txid);
   const st = await connection.getSignatureStatuses(txids, { searchTransactionHistory: true });
   for (let i = 0; i < txids.length; i++) {
     const sig = txids[i];

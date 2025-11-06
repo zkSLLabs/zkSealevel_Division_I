@@ -1,3 +1,5 @@
+import type { Commitment } from "@solana/web3.js";
+
 export async function fetchConfig(programIdStr: string, rpcUrl: string): Promise<{
   aggregator_pubkey: Uint8Array;
   next_aggregator_pubkey: Uint8Array;
@@ -5,12 +7,12 @@ export async function fetchConfig(programIdStr: string, rpcUrl: string): Promise
   chain_id: bigint;
 }> {
   const web3 = await import("@solana/web3.js");
-  const programId = new (web3 as any).PublicKey(programIdStr);
-  const connection = new (web3 as any).Connection(rpcUrl, { commitment: process.env.MIN_FINALITY_COMMITMENT || "finalized" });
-  const pda = (web3 as any).PublicKey.findProgramAddressSync([Buffer.from("zksl"), Buffer.from("config")], programId)[0];
-  const acc = await connection.getAccountInfo(pda, { commitment: process.env.MIN_FINALITY_COMMITMENT || "finalized" });
+  const programId = new web3.PublicKey(programIdStr);
+  const connection = new web3.Connection(rpcUrl, { commitment: (process.env.MIN_FINALITY_COMMITMENT as Commitment) || "finalized" });
+  const pda = web3.PublicKey.findProgramAddressSync([Buffer.from("zksl"), Buffer.from("config")], programId)[0];
+  const acc = await connection.getAccountInfo(pda, { commitment: (process.env.MIN_FINALITY_COMMITMENT as Commitment) || "finalized" });
   if (!acc) throw new Error("config account not found");
-  const data: Buffer = acc.data as Buffer;
+  const data: Buffer = acc.data;
   let off = 8 + 32 + 32; // zksl_mint + admin
   const aggregator_pubkey = data.subarray(off, off + 32); off += 32;
   const next_aggregator_pubkey = data.subarray(off, off + 32); off += 32;
@@ -26,13 +28,13 @@ export async function fetchConfig(programIdStr: string, rpcUrl: string): Promise
 
 export async function fetchLastSeq(programIdStr: string, rpcUrl: string): Promise<bigint> {
   const web3 = await import("@solana/web3.js");
-  const programId = new (web3 as any).PublicKey(programIdStr);
-  const connection = new (web3 as any).Connection(rpcUrl, { commitment: process.env.MIN_FINALITY_COMMITMENT || "finalized" });
-  const pda = (web3 as any).PublicKey.findProgramAddressSync([Buffer.from("zksl"), Buffer.from("aggregator")], programId)[0];
-  const acc = await connection.getAccountInfo(pda, { commitment: process.env.MIN_FINALITY_COMMITMENT || "finalized" });
+  const programId = new web3.PublicKey(programIdStr);
+  const connection = new web3.Connection(rpcUrl, { commitment: (process.env.MIN_FINALITY_COMMITMENT as Commitment) || "finalized" });
+  const pda = web3.PublicKey.findProgramAddressSync([Buffer.from("zksl"), Buffer.from("aggregator")], programId)[0];
+  const acc = await connection.getAccountInfo(pda, { commitment: (process.env.MIN_FINALITY_COMMITMENT as Commitment) || "finalized" });
   if (!acc) return 0n;
-  const data: Buffer = acc.data as Buffer;
-  let off = 8 + 32; // skip discriminator + aggregator_pubkey
+  const data: Buffer = acc.data;
+  const off = 8 + 32; // skip discriminator + aggregator_pubkey
   const lastSeq = data.readBigUInt64LE(off);
   return lastSeq;
 }

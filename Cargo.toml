@@ -1,0 +1,19 @@
+[workspace]
+members = ["prover"]
+resolver = "2"
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+license = "Apache-2.0"
+repository = "https://github.com/yourusername/zkSealevel_Division_I"
+
+[workspace.dependencies]
+anyhow = "1.0.100"
+blake3 = "1.8.2"
+bs58 = "0.5.1"
+clap = { version = "4.5", features = ["derive"] }
+ed25519-dalek = "2.2"
+hex = "0.4.3"
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"

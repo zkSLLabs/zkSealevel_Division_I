@@ -11,6 +11,7 @@ import { Client as PgClient } from "pg";
 import { encodeAnchorProofArgsBorsh, i64le, u64le } from "./crypto.js";
 import { mapProgramError } from "./errors.js";
 import { fetchConfig, fetchLastSeq } from "./onchain.js";
+import type { Commitment } from "@solana/web3.js";
 
 dotenv.config({ path: process.cwd() + "/.env" });
 
@@ -43,10 +44,7 @@ const idempotencyCache = new Map<string, CachedResponse>();
 let idemSetCounter = 0;
 
 function getIdemKey(req: Request): string | null {
-  // Access header in a generic way to avoid type coupling
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const headers = (req as any).headers as Record<string, string | string[] | undefined>;
-  const raw = headers?.["idempotency-key"];
+  const raw = req.headers["idempotency-key"];
   const k = Array.isArray(raw) ? raw[0] : raw;
   if (!k) return null;
   const v = k.trim();
@@ -54,14 +52,11 @@ function getIdemKey(req: Request): string | null {
 }
 
 function enforceIdempotency(req: Request, res: Response, next: () => void) {
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const method = (req as any).method as string | undefined;
-  if (method !== "POST") return next();
+  if (req.method !== "POST") return next();
   const key = getIdemKey(req);
   if (!key) {
-    return res
-      .status(400)
-      .json({ error: { code: "MissingIdempotencyKey", message: "Idempotency-Key header required", details: null } });
+    res.status(400).json({ error: { code: "MissingIdempotencyKey", message: "Idempotency-Key header required", details: null } });
+    return;
   }
   const existing = idempotencyCache.get(key);
   if (existing && Date.now() - existing.ts < IDEMP_TTL_MS) {
@@ -71,8 +66,7 @@ function enforceIdempotency(req: Request, res: Response, next: () => void) {
   const originalJson = res.json.bind(res);
   res.json = (body: unknown) => {
     try {
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const sc = (res as any).statusCode as number | undefined;
+      const sc = res.statusCode;
       idempotencyCache.set(key, { status: sc || 200, body, ts: Date.now() });
       if (++idemSetCounter % 100 === 0) {
         const now = Date.now();
@@ -332,9 +326,8 @@ app.post("/anchor", async (req: Request, res: Response) => {
 
 // GET endpoints per Complete_Architecture.md
 app.get("/proof/:artifact_id", async (req: Request, res: Response) => {
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const params = (req as any).params as Record<string, unknown> | undefined;
-  const id = String((params?.artifact_id) ?? "");
+  const params = req.params;
+  const id = String(params.artifact_id ?? "");
   const art = artifacts.get(id);
   const pg = new PgClient({ connectionString: DATABASE_URL });
   await pg.connect();
@@ -346,9 +339,8 @@ app.get("/proof/:artifact_id", async (req: Request, res: Response) => {
 });
 
 app.get("/validator/:pubkey", async (req: Request, res: Response) => {
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const params = (req as any).params as Record<string, unknown> | undefined;
-  const pk = String((params?.pubkey) ?? "");
+  const params = req.params;
+  const pk = String(params.pubkey ?? "");
   const pg = new PgClient({ connectionString: DATABASE_URL });
   await pg.connect();
   const row = await pg.query("SELECT * FROM validators WHERE pubkey = $1", [pk]);
@@ -388,11 +380,11 @@ async function submitAnchorProof(params: {
   // Lazy import to avoid hard type coupling to local shims
   const web3 = await import("@solana/web3.js");
   const connection = new web3.Connection(params.rpcUrl, {
-    commitment: process.env.MIN_FINALITY_COMMITMENT || "finalized",
+    commitment: (process.env.MIN_FINALITY_COMMITMENT as Commitment) || "finalized",
   });
   const payer = web3.Keypair.fromSecretKey(params.aggregatorSecretKey);
 
-  const computeIx = web3.ComputeBudgetProgram.setComputeUnitLimit({ units: 200_000 });
+  const computeIx = web3.ComputeBudgetProgram.setComputeUnitLimit(200_000);
   const ed25519Ix = web3.Ed25519Program.createInstructionWithPublicKey({
     publicKey: payer.publicKey.toBytes(),
     message: Buffer.from(params.ds),
@@ -452,9 +444,9 @@ async function submitAnchorProof(params: {
     { pubkey: rangeStatePda, isSigner: false, isWritable: true },
     { pubkey: proofRecordPda, isSigner: false, isWritable: true },
     { pubkey: validatorRecordPda, isSigner: false, isWritable: true },
-    { pubkey: (web3 as any).SYSVAR_INSTRUCTIONS_PUBKEY, isSigner: false, isWritable: false },
-    { pubkey: (web3 as any).SYSVAR_CLOCK_PUBKEY, isSigner: false, isWritable: false },
-    { pubkey: (web3 as any).SystemProgram.programId, isSigner: false, isWritable: false },
+    { pubkey: web3.PublicKey.SYSVAR_INSTRUCTIONS_PUBKEY, isSigner: false, isWritable: false },
+    { pubkey: web3.PublicKey.SYSVAR_CLOCK_PUBKEY, isSigner: false, isWritable: false },
+    { pubkey: web3.SystemProgram.programId, isSigner: false, isWritable: false },
   ];
 
   const ix = new web3.TransactionInstruction({ keys, programId, data });
@@ -467,10 +459,8 @@ async function submitAnchorProof(params: {
   tx.recentBlockhash = latest.blockhash;
   tx.feePayer = payer.publicKey;
   tx.sign(payer);
-  const sig = await (web3 as any).sendAndConfirmTransaction(connection, tx, [payer], {
-    commitment: process.env.MIN_FINALITY_COMMITMENT || "finalized",
-  });
-  return sig as string;
+  const sig = await web3.sendAndConfirmTransaction(connection, tx, [payer]);
+  return sig;
 }
 
 // (moved Borsh encoder and LE helpers to crypto.ts)
@@ -483,17 +473,17 @@ function canonicalize(value: unknown): string {
   function stringifyCanonical(v: unknown): string {
     if (v === null) return "null";
     const t = typeof v;
-    if (t === "number" || t === "boolean" || t === "string") return JSON.stringify(v as never);
+    if (t === "number" || t === "boolean" || t === "string") return JSON.stringify(v);
     if (Array.isArray(v)) return "[" + (v as unknown[]).map(stringifyCanonical).join(",") + "]";
     if (t === "object") {
       const obj = v as Record<string, unknown>;
       const entries = Object.keys(obj)
-        .filter((k) => (obj as Record<string, unknown>)[k] !== undefined)
+        .filter((k) => obj[k] !== undefined)
         .sort()
         .map((k) => JSON.stringify(k) + ":" + stringifyCanonical(obj[k]));
       return "{" + entries.join(",") + "}";
     }
-    return JSON.stringify(v as never);
+    return JSON.stringify(v);
   }
 }
 
@@ -553,7 +543,7 @@ async function loadArtifactFromDisk(artifactId: string): Promise<(Artifact & { p
 
 async function findFileRecursive(dir: string, fileName: string, maxDepth: number): Promise<string | null> {
   if (maxDepth < 0) return null;
-  const entries = await fsp.readdir(dir, { withFileTypes: true }).catch(() => [] as any);
+  const entries = await fsp.readdir(dir, { withFileTypes: true }).catch(() => []);
   for (const e of entries) {
     const p = path.join(dir, e.name);
     if (e.isFile() && e.name === fileName) return p;
