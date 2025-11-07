@@ -14,6 +14,7 @@ jobs:
       PROGRAM_ID_VALIDATOR_LOCK: BCx5eHewBbe6Ft2xXpDXTghuiy5WxM636xN5G45KCp5E
       CHAIN_ID: "103"
       AGGREGATOR_KEYPAIR_PATH: ./keys/aggregator.json
+      DATABASE_URL: postgresql://postgres:postgres@localhost:5432/zksl
     services:
       postgres:
         image: postgres:15
