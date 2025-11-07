@@ -3,10 +3,6 @@ import { buildDS, u64le, encodeAnchorProofArgsBorsh } from "../src/crypto.js";
 
 // 40 KAT-like tests: deterministic DS and anchor_proof payload length
 describe("KATs: DS and anchor_proof encoding", () => {
-  const programId = Buffer.from(
-    "4DDKoz69pr37yBMW9LVeuM7P2GHS9BQ9ctLHydbWeYxQ",
-    "utf8",
-  );
   const prog = Buffer.alloc(32, 7); // fixed 32-byte program id for KAT
   const proofHash = Buffer.alloc(32, 5);
 

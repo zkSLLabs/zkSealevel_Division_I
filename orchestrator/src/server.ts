@@ -85,15 +85,19 @@ app.use(enforceIdempotency);
 
 function loadAggregatorSecret(): Uint8Array {
   const raw = fs.readFileSync(AGG_KEY_PATH, { encoding: "utf8" });
-  const parsed = JSON.parse(raw);
+  const parsed: unknown = JSON.parse(raw);
   if (Array.isArray(parsed) && parsed.length === 64) {
     return new Uint8Array(parsed);
   }
-  if (typeof parsed === "object" && parsed.solana && Array.isArray(parsed.solana) && parsed.solana.length === 64) {
-    return new Uint8Array(parsed.solana);
+  if (typeof parsed === "object" && parsed !== null && "solana" in parsed) {
+    const obj = parsed as { solana: unknown };
+    if (Array.isArray(obj.solana) && obj.solana.length === 64) {
+      return new Uint8Array(obj.solana);
+    }
   }
-  if (typeof parsed === "object" && parsed.secretKey) {
-    const hex = parsed.secretKey;
+  if (typeof parsed === "object" && parsed !== null && "secretKey" in parsed) {
+    const obj = parsed as { secretKey: string };
+    const hex = obj.secretKey;
     const bytes = Buffer.from(hex, "hex");
     if (bytes.length !== 64) throw new Error("secretKey must be 64-byte ed25519 seed+key in hex");
     return new Uint8Array(bytes);
@@ -405,7 +409,7 @@ async function submitAnchorProof(params: {
   const feePayerPath = process.env.FEE_PAYER_KEYPAIR_PATH
     || (process.env.USERPROFILE ? path.join(process.env.USERPROFILE, ".config", "solana", "id.json") : undefined)
     || "./keys/sol_agg.json";
-  let payer: any;
+  let payer: typeof web3.Keypair.prototype;
   try {
     const raw = fs.readFileSync(feePayerPath, { encoding: "utf8" });
     const arr = JSON.parse(raw) as number[];
@@ -414,7 +418,11 @@ async function submitAnchorProof(params: {
     throw new Error(`FeePayerLoadFailed: ${String(e)}`);
   }
 
-  const computeIx = (web3 as any).ComputeBudgetProgram.setComputeUnitLimit({ units: 200_000 });
+  // TypeScript doesn't have ComputeBudgetProgram in web3.js types, so we need to access it via dynamic import
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const ComputeBudgetProgram = (web3 as any).ComputeBudgetProgram;
+  // eslint-disable-next-line @typescript-eslint/no-unsafe-call, @typescript-eslint/no-unsafe-member-access
+  const computeIx = ComputeBudgetProgram.setComputeUnitLimit({ units: 200_000 }) as typeof web3.TransactionInstruction.prototype;
   const ed25519Ix = web3.Ed25519Program.createInstructionWithPublicKey({
     publicKey: Buffer.from(params.aggregatorPubkey),
     message: Buffer.from(params.ds),
@@ -470,26 +478,33 @@ async function submitAnchorProof(params: {
   // eslint-disable-next-line no-console
   console.log("submitAnchorProof: derived proofRecordPda:", proofRecordPda.toString());
 
+  // SYSVAR_INSTRUCTIONS_PUBKEY is available in web3.js but may not be in types
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any, @typescript-eslint/no-unsafe-member-access
+  const SYSVAR_INSTRUCTIONS_PUBKEY = (web3 as any).SYSVAR_INSTRUCTIONS_PUBKEY as typeof web3.PublicKey.prototype;
+
   const keys = [
     { pubkey: payer.publicKey, isSigner: true, isWritable: true },
     { pubkey: configPda, isSigner: false, isWritable: true },
     { pubkey: aggregatorStatePda, isSigner: false, isWritable: true },
     { pubkey: rangeStatePda, isSigner: false, isWritable: true },
     { pubkey: proofRecordPda, isSigner: false, isWritable: true },
-    { pubkey: (web3 as any).SYSVAR_INSTRUCTIONS_PUBKEY, isSigner: false, isWritable: false },
+    { pubkey: SYSVAR_INSTRUCTIONS_PUBKEY, isSigner: false, isWritable: false },
     { pubkey: web3.SystemProgram.programId, isSigner: false, isWritable: false },
   ];
 
   // eslint-disable-next-line no-console
   console.log("anchor keys lens:", keys.length);
   for (let i = 0; i < keys.length; i++) {
-    const k = keys[i] as any;
-    console.log("key[", i, "]", {
-      hasPub: !!k?.pubkey,
-      isSigner: k?.isSigner,
-      isWritable: k?.isWritable,
-      pub: k?.pubkey?.toString?.(),
-    });
+    const k = keys[i];
+    if (k) {
+      // eslint-disable-next-line no-console
+      console.log("key[", i, "]", {
+        hasPub: !!k.pubkey,
+        isSigner: k.isSigner,
+        isWritable: k.isWritable,
+        pub: k.pubkey?.toString?.(),
+      });
+    }
   }
   const ix = new web3.TransactionInstruction({ keys, programId, data });
   const tx = new web3.Transaction();
