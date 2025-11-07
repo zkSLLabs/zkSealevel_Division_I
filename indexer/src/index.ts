@@ -117,9 +117,8 @@ function subscribeProgramAccounts(params: { connection: web3.Connection; program
         const data: Buffer = info.accountInfo.data;
         const head = data.subarray(0, 8);
         if (head.equals(prDisc)) {
-          const pr = decodeProofRecord(data);
-          const txid = ""; // unknown in push; poller will backfill txid
-          await upsertProof(pg, { ...pr, txid, commitment_level: 0 });
+          // Skip proof upsert on WS path to avoid NOT NULL/UNIQUE txid constraint issues.
+          // Polling path (scanOnce) will backfill proofs with real txid.
         } else if (head.equals(vrDisc)) {
           const vr = decodeValidatorRecord(data);
           await upsertValidator(pg, vr);

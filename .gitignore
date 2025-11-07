@@ -8,10 +8,10 @@
 .envrc
 .direnv/
 
-# Keys and private material
-keys/
-**/keys/**
-!keys/aggregator.json
+# Keys and private material (NEVER commit actual keys!)
+keys/*.json
+**/keys/*.json
+keys/*.key
 *.pem
 *.key
 *.der
@@ -19,6 +19,9 @@ keys/
 *.pfx
 *.crt
 *.cer
+# Allow example/template files only
+!keys/*.example.json
+!keys/README.md
 
 # Anchor/Solana sensitive keypairs generated during builds
 **/target/deploy/*-keypair.json

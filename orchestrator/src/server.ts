@@ -1,17 +1,17 @@
 import express from "express";
 import type { Request, Response } from "express";
 import dotenv from "dotenv";
-import { randomUUID } from "node:crypto";
+import { randomBytes } from "crypto";
 import { hash as blake3hash } from "blake3";
-import * as nacl from "tweetnacl";
-import * as fs from "node:fs";
-import { promises as fsp } from "node:fs";
-import * as path from "node:path";
+import nacl from "tweetnacl";
+import * as fs from "fs";
+import { promises as fsp } from "fs";
+import * as path from "path";
 import { Client as PgClient } from "pg";
-import { encodeAnchorProofArgsBorsh, i64le, u64le } from "./crypto.js";
+import { encodeAnchorProofArgsBorsh, i64le, u64le, canonicalize, buildDS } from "./crypto.js";
 import { mapProgramError } from "./errors.js";
 import { fetchConfig, fetchLastSeq } from "./onchain.js";
-import { spawnSync } from "node:child_process";
+import { spawnSync } from "child_process";
 import type { Commitment } from "@solana/web3.js";
 
 dotenv.config({ path: process.cwd() + "/.env" });
@@ -20,11 +20,11 @@ const app = express();
 app.use(express.json({ limit: "1mb" }));
 
 const PORT = parseInt(process.env.PORT || "8080", 10);
-const RPC_URL = process.env.RPC_URL || "http://localhost:8899";
+const RPC_URL = process.env.RPC_URL || "https://api.devnet.solana.com";
 const PROGRAM_ID = process.env.PROGRAM_ID_VALIDATOR_LOCK || "";
-const CHAIN_ID = BigInt(process.env.CHAIN_ID || "1");
+const CHAIN_ID = BigInt(process.env.CHAIN_ID || "103");
 const AGG_KEY_PATH = process.env.AGGREGATOR_KEYPAIR_PATH || "./keys/aggregator.json";
-const ARTIFACT_DIR = process.env.ARTIFACT_DIR || "./data/artifacts";
+const ARTIFACT_DIR = process.env.ARTIFACT_DIR || "./orchestrator/data/artifacts";
 const DATABASE_URL = process.env.DATABASE_URL || "postgres://postgres:postgres@localhost:5432/zksl";
 
 type Artifact = Record<string, unknown> & {
@@ -85,39 +85,23 @@ app.use(enforceIdempotency);
 
 function loadAggregatorSecret(): Uint8Array {
   const raw = fs.readFileSync(AGG_KEY_PATH, { encoding: "utf8" });
-  const obj = JSON.parse(raw) as { secretKey?: string };
-  if (!obj.secretKey) throw new Error("AGGREGATOR_KEYPAIR_PATH missing secretKey");
-  const hex = obj.secretKey;
-  const bytes = Buffer.from(hex, "hex");
-  if (bytes.length !== 64) throw new Error("secretKey must be 64-byte ed25519 seed+key in hex");
-  return new Uint8Array(bytes);
+  const parsed = JSON.parse(raw);
+  if (Array.isArray(parsed) && parsed.length === 64) {
+    return new Uint8Array(parsed);
+  }
+  if (typeof parsed === "object" && parsed.solana && Array.isArray(parsed.solana) && parsed.solana.length === 64) {
+    return new Uint8Array(parsed.solana);
+  }
+  if (typeof parsed === "object" && parsed.secretKey) {
+    const hex = parsed.secretKey;
+    const bytes = Buffer.from(hex, "hex");
+    if (bytes.length !== 64) throw new Error("secretKey must be 64-byte ed25519 seed+key in hex");
+    return new Uint8Array(bytes);
+  }
+  throw new Error("AGGREGATOR_KEYPAIR_PATH invalid format");
 }
 
-function buildDS(params: {
-  chainId: bigint;
-  programId: Uint8Array;
-  proofHash: Uint8Array;
-  startSlot: bigint;
-  endSlot: bigint;
-  seq: bigint;
-}): { ds: Uint8Array; dsHash: Uint8Array } {
-  const enc64 = (n: bigint) => {
-    const b = Buffer.alloc(8);
-    b.writeBigUInt64LE(n);
-    return b;
-  };
-  const ds = Buffer.concat([
-    Buffer.from("zKSL/anchor/v1", "utf8"),
-    enc64(params.chainId),
-    Buffer.from(params.programId),
-    Buffer.from(params.proofHash),
-    enc64(params.startSlot),
-    enc64(params.endSlot),
-    enc64(params.seq),
-  ]);
-  const dsHash = blake3hash(ds);
-  return { ds: new Uint8Array(ds), dsHash: new Uint8Array(dsHash) };
-}
+// buildDS imported from ./crypto.ts
 
 // Health
 app.get("/health", (_req: Request, res: Response) => {
@@ -329,7 +313,7 @@ app.post("/anchor", async (req: Request, res: Response) => {
   const ds_hash = Buffer.from(dsHash).toString("hex");
   try {
     // Prepare real args per spec
-    const artifact_id_bytes = uuidToBytes(String(artifact.artifact_id || "")) || uuidToBytes(randomUUID());
+    const artifact_id_bytes = uuidToBytes(String(artifact.artifact_id || "")) || uuidToBytes(randomUuidV4());
     const state_root_before = hexTo32(normalizeHex32(String(artifact.state_root_before || "")));
     const state_root_after = hexTo32(normalizeHex32(String(artifact.state_root_after || "")));
     const timestamp = BigInt(Math.floor(Date.now() / 1000));
@@ -352,6 +336,8 @@ app.post("/anchor", async (req: Request, res: Response) => {
     });
     res.json({ aggregator_signature, ds_hash, transaction_id: txid });
   } catch (e) {
+    // eslint-disable-next-line no-console
+    console.error("/anchor failed:", e);
     const mapped = mapProgramError(e);
     res.status(mapped.http).json({ error: { code: mapped.code, message: mapped.message, details: mapped.details } });
   }
@@ -415,11 +401,22 @@ async function submitAnchorProof(params: {
   const connection = new web3.Connection(params.rpcUrl, {
     commitment: (process.env.MIN_FINALITY_COMMITMENT as Commitment) || "finalized",
   });
-  const payer = web3.Keypair.fromSecretKey(params.aggregatorSecretKey);
+  // Load fee payer from env or default Solana keypair path; do NOT require aggregator to be a tx signer
+  const feePayerPath = process.env.FEE_PAYER_KEYPAIR_PATH
+    || (process.env.USERPROFILE ? path.join(process.env.USERPROFILE, ".config", "solana", "id.json") : undefined)
+    || "./keys/sol_agg.json";
+  let payer: any;
+  try {
+    const raw = fs.readFileSync(feePayerPath, { encoding: "utf8" });
+    const arr = JSON.parse(raw) as number[];
+    payer = web3.Keypair.fromSecretKey(Uint8Array.from(arr));
+  } catch (e) {
+    throw new Error(`FeePayerLoadFailed: ${String(e)}`);
+  }
 
-  const computeIx = web3.ComputeBudgetProgram.setComputeUnitLimit(200_000);
+  const computeIx = (web3 as any).ComputeBudgetProgram.setComputeUnitLimit({ units: 200_000 });
   const ed25519Ix = web3.Ed25519Program.createInstructionWithPublicKey({
-    publicKey: payer.publicKey.toBytes(),
+    publicKey: Buffer.from(params.aggregatorPubkey),
     message: Buffer.from(params.ds),
     signature: nacl.sign.detached(params.ds, params.aggregatorSecretKey),
   });
@@ -430,17 +427,22 @@ async function submitAnchorProof(params: {
   const endLe = u64le(params.endSlot);
   const seqLe = u64le(params.seq);
 
+  // eslint-disable-next-line no-console
+  console.log("submitAnchorProof: proof_hash hex:", proofHash32.toString("hex"));
+  // eslint-disable-next-line no-console
+  console.log("submitAnchorProof: seq:", params.seq.toString());
+
   const data = encodeAnchorProofArgsBorsh({
     artifactId: params.artifactId,
+    proofHash32,
+    seqLe,
     startLe,
     endLe,
-    proofHash32,
     artifactLen: params.artifactLen,
     stateRootBefore: params.stateRootBefore,
     stateRootAfter: params.stateRootAfter,
     aggregatorPubkey: params.aggregatorPubkey,
     timestampLe: i64le(params.timestamp),
-    seqLe,
     dsHash32,
   });
 
@@ -464,11 +466,9 @@ async function submitAnchorProof(params: {
     [Buffer.from("zksl"), Buffer.from("proof"), proofHash32, seqLe],
     programId,
   )[0];
-
-  const validatorRecordPda = web3.PublicKey.findProgramAddressSync(
-    [Buffer.from("zksl"), Buffer.from("validator"), payer.publicKey.toBytes()],
-    programId,
-  )[0];
+  
+  // eslint-disable-next-line no-console
+  console.log("submitAnchorProof: derived proofRecordPda:", proofRecordPda.toString());
 
   const keys = [
     { pubkey: payer.publicKey, isSigner: true, isWritable: true },
@@ -476,16 +476,27 @@ async function submitAnchorProof(params: {
     { pubkey: aggregatorStatePda, isSigner: false, isWritable: true },
     { pubkey: rangeStatePda, isSigner: false, isWritable: true },
     { pubkey: proofRecordPda, isSigner: false, isWritable: true },
-    { pubkey: validatorRecordPda, isSigner: false, isWritable: true },
-    { pubkey: web3.PublicKey.SYSVAR_INSTRUCTIONS_PUBKEY, isSigner: false, isWritable: false },
-    { pubkey: web3.PublicKey.SYSVAR_CLOCK_PUBKEY, isSigner: false, isWritable: false },
+    { pubkey: (web3 as any).SYSVAR_INSTRUCTIONS_PUBKEY, isSigner: false, isWritable: false },
     { pubkey: web3.SystemProgram.programId, isSigner: false, isWritable: false },
   ];
 
+  // eslint-disable-next-line no-console
+  console.log("anchor keys lens:", keys.length);
+  for (let i = 0; i < keys.length; i++) {
+    const k = keys[i] as any;
+    console.log("key[", i, "]", {
+      hasPub: !!k?.pubkey,
+      isSigner: k?.isSigner,
+      isWritable: k?.isWritable,
+      pub: k?.pubkey?.toString?.(),
+    });
+  }
   const ix = new web3.TransactionInstruction({ keys, programId, data });
   const tx = new web3.Transaction();
+  // eslint-disable-next-line no-console
+  console.log("anchor ix pid:", programId.toString());
   tx.add(computeIx);
-  tx.add(ed25519Ix); // must be immediately before anchor ix
+  tx.add(ed25519Ix);
   tx.add(ix);
 
   const latest = await connection.getLatestBlockhash();
@@ -501,24 +512,7 @@ async function submitAnchorProof(params: {
 // mapProgramError moved to errors.ts
 
 // ============== Canonical JSON (JCS-like) ==============
-function canonicalize(value: unknown): string {
-  return stringifyCanonical(value);
-  function stringifyCanonical(v: unknown): string {
-    if (v === null) return "null";
-    const t = typeof v;
-    if (t === "number" || t === "boolean" || t === "string") return JSON.stringify(v);
-    if (Array.isArray(v)) return "[" + (v as unknown[]).map(stringifyCanonical).join(",") + "]";
-    if (t === "object") {
-      const obj = v as Record<string, unknown>;
-      const entries = Object.keys(obj)
-        .filter((k) => obj[k] !== undefined)
-        .sort()
-        .map((k) => JSON.stringify(k) + ":" + stringifyCanonical(obj[k]));
-      return "{" + entries.join(",") + "}";
-    }
-    return JSON.stringify(v);
-  }
-}
+// canonicalize imported from ./crypto.ts
 
 async function ensureDir(dir: string): Promise<void> {
   try {
@@ -538,12 +532,19 @@ function bytesEq(a: Uint8Array, b: Uint8Array): boolean {
   for (let i = 0; i < a.length; i++) if (a[i] !== b[i]) return false;
   return true;
 }
+function randomUuidV4(): string {
+  const b = randomBytes(16);
+  b.writeUInt8((b.readUInt8(6) & 0x0f) | 0x40, 6); // version 4
+  b.writeUInt8((b.readUInt8(8) & 0x3f) | 0x80, 8); // variant 10xx
+  const hex = b.toString("hex");
+  return `${hex.slice(0,8)}-${hex.slice(8,12)}-${hex.slice(12,16)}-${hex.slice(16,20)}-${hex.slice(20)}`;
+}
 function uuidToBytes(u: string): Uint8Array {
   // Accept UUID v4 string; parse hex sans dashes
   const hex = u.replace(/-/g, "");
   if (hex.length !== 32) {
     // generate random if malformed
-    return new Uint8Array(Buffer.from(randomUUID().replace(/-/g, ""), "hex"));
+    return new Uint8Array(Buffer.from(randomUuidV4().replace(/-/g, ""), "hex"));
   }
   return new Uint8Array(Buffer.from(hex, "hex"));
 }

@@ -38,7 +38,7 @@ const COMPUTE_BUDGET_ID: Pubkey = Pubkey::new_from_array([
     0x2c, 0x43, 0x9b, 0x3a, 0x40, 0x00, 0x00, 0x00,
 ]);
 
-declare_id!("4DDKoz69pr37yBMW9LVeuM7P2GHS9BQ9ctLHydbWeYxQ");
+declare_id!("BCx5eHewBbe6Ft2xXpDXTghuiy5WxM636xN5G45KCp5E");
 
 /// Program entrypoint module for validator_lock per Master_Blueprint.md
 #[cfg(not(feature = "skip-anchor-program"))]
@@ -55,6 +55,9 @@ pub mod validator_lock {
         cfg.activation_seq = args.activation_seq;
         cfg.chain_id = args.chain_id;
         cfg.paused = 0;
+        // minimal state touch to avoid unused warnings on constants/helpers
+        let _ = (COMPUTE_BUDGET_ID, DS_PREFIX, MAX_SLOTS_PER_ARTIFACT, MAX_CLOCK_SKEW_SECS);
+        let _ = allowed_aggregator_key;
         Ok(())
     }
 
@@ -132,17 +135,17 @@ pub mod validator_lock {
     #[allow(clippy::too_many_arguments)]
     pub fn anchor_proof(
         ctx: Context<AnchorProof>,
-        artifact_id: [u8; 16],
-        start_slot: u64,
-        end_slot: u64,
-        proof_hash: [u8; 32],
-        artifact_len: u32,
-        state_root_before: [u8; 32],
-        state_root_after: [u8; 32],
-        aggregator_pubkey: Pubkey,
-        timestamp: i64,
-        seq: u64,
-        ds_hash: [u8; 32],
+        artifact_id: [u8; 16],        // arg 0
+        proof_hash: [u8; 32],          // arg 1 - moved up for #[instruction]
+        seq: u64,                      // arg 2 - moved up for #[instruction]
+        start_slot: u64,               // arg 3
+        end_slot: u64,                 // arg 4
+        artifact_len: u32,             // arg 5
+        state_root_before: [u8; 32],   // arg 6
+        state_root_after: [u8; 32],    // arg 7
+        aggregator_pubkey: Pubkey,     // arg 8
+        timestamp: i64,                // arg 9
+        ds_hash: [u8; 32],             // arg 10
     ) -> Result<()> {
         require!(ctx.accounts.config.paused == 0, ErrorCode::Paused);
         let allowed = allowed_aggregator_key(&ctx.accounts.config, seq);
@@ -151,10 +154,10 @@ pub mod validator_lock {
         // Strict Ed25519 preflight checks: ensure previous ix is Ed25519 and only one Ed25519 in tx
         let ix_acc = ctx.accounts.sysvar_instructions.to_account_info();
         let mut ed_count: u32 = 0;
-        let mut i: usize = 0;
+        let mut idx: usize = 0;
         let mut has_compute_ok = false;
         loop {
-            let ix = sysvar_instructions::load_instruction_at_checked(i, &ix_acc).ok();
+            let ix = sysvar_instructions::load_instruction_at_checked(idx, &ix_acc).ok();
             if ix.is_none() { break; }
             let ix = ix.unwrap();
             if ix.program_id == ed25519_program::id() { ed_count += 1; }
@@ -169,12 +172,15 @@ pub mod validator_lock {
                     }
                 }
             }
-            i += 1;
+            idx += 1;
         }
         require!(ed_count == 1, ErrorCode::BadEd25519Order);
         require!(has_compute_ok, ErrorCode::InsufficientBudget);
-        let last_ix_idx = i.saturating_sub(2);
-        let prev_ix = sysvar_instructions::load_instruction_at_checked(last_ix_idx, &ix_acc)
+        // Use the current instruction index to safely reference the immediately preceding instruction
+        let cur_idx = sysvar_instructions::load_current_index_checked(&ix_acc)
+            .map_err(|_| error!(ErrorCode::BadEd25519Order))? as usize;
+        require!(cur_idx >= 1, ErrorCode::BadEd25519Order);
+        let prev_ix = sysvar_instructions::load_instruction_at_checked(cur_idx - 1, &ix_acc)
             .map_err(|_| error!(ErrorCode::BadEd25519Order))?;
         let prev_is_ed25519 = prev_ix.program_id == ed25519_program::id();
         require!(prev_is_ed25519, ErrorCode::BadEd25519Order);
@@ -211,7 +217,7 @@ pub mod validator_lock {
         ds.extend_from_slice(&seq.to_le_bytes());
         let mut hasher = Blake3Hasher::new();
         hasher.update(&ds);
-         let expected_ds_hash = *hasher.finalize().as_bytes();
+        let expected_ds_hash = *hasher.finalize().as_bytes();
         require!(expected_ds_hash == ds_hash, ErrorCode::BadDomainSeparation);
 
         // Parse Ed25519 instruction to ensure it signed the exact DS and with the allowed pubkey
@@ -219,7 +225,6 @@ pub mod validator_lock {
         require!(data.len() >= 16, ErrorCode::InvalidSignature);
         let num = data[0];
         require!(num == 1, ErrorCode::InvalidSignature);
-        // Offsets for single-signature header (u16 little-endian values)
         let sig_off = u16::from_le_bytes([data[2], data[3]]) as usize;
         let sig_ix = u16::from_le_bytes([data[4], data[5]]);
         let pk_off = u16::from_le_bytes([data[6], data[7]]) as usize;
@@ -227,23 +232,18 @@ pub mod validator_lock {
         let msg_off = u16::from_le_bytes([data[10], data[11]]) as usize;
         let msg_len = u16::from_le_bytes([data[12], data[13]]) as usize;
         let msg_ix = u16::from_le_bytes([data[14], data[15]]);
-        // Require in-instruction references
         require!(sig_ix == u16::MAX && pk_ix == u16::MAX && msg_ix == u16::MAX, ErrorCode::BadEd25519Order);
-        // Bounds checks
         require!(data.len() >= sig_off + 64, ErrorCode::InvalidSignature);
         require!(data.len() >= pk_off + 32, ErrorCode::InvalidSignature);
         require!(data.len() >= msg_off + msg_len, ErrorCode::InvalidSignature);
-        // Verify pubkey matches allowed aggregator
         let pk = &data[pk_off..pk_off + 32];
         require!(pk == aggregator_pubkey.as_ref(), ErrorCode::InvalidSignature);
-        // Verify message bytes exactly equal DS
         require!(msg_len == ds.len(), ErrorCode::BadDomainSeparation);
         let msg = &data[msg_off..msg_off + msg_len];
         require!(msg == ds.as_slice(), ErrorCode::BadDomainSeparation);
 
         // Populate ProofRecord
         let pr = &mut ctx.accounts.proof_record;
-        // If record already exists, reject duplicate
         require!(pr.seq == 0, ErrorCode::ProofAlreadyAnchored);
         pr.artifact_id = artifact_id;
         pr.start_slot = start_slot;
@@ -265,9 +265,45 @@ pub mod validator_lock {
         ctx.accounts.aggregator_state.last_seq = seq;
         ctx.accounts.range_state.last_end_slot = end_slot;
 
-        // Increment validator accepts if active (temporarily disabled to reduce stack usage)
-
         emit!(ProofAnchored { artifact_id, proof_hash, start_slot, end_slot, submitted_by: ctx.accounts.submitted_by.key(), timestamp, seq, ds_hash });
+        Ok(())
+    }
+
+    pub fn ping(ctx: Context<Ping>) -> Result<()> {
+        // Minimal instruction to validate account decoding path
+        msg!("PING");
+        let _ = ctx.accounts.config.chain_id; // touch to avoid unused
+        Ok(())
+    }
+
+    pub fn init_state(ctx: Context<InitState>) -> Result<()> {
+        // Initialize aggregator_state and range_state to zero
+        ctx.accounts.aggregator_state.last_seq = 0;
+        ctx.accounts.range_state.last_end_slot = 0;
+        Ok(())
+    }
+
+    pub fn echo_accounts(
+        ctx: Context<EchoAccounts>,
+        proof_hash: [u8; 32],
+        seq: u64,
+    ) -> Result<()> {
+        // Log out all resolved accounts in the exact order Anchor expects
+        msg!("ECHO start");
+        msg!("submitted_by: {}", ctx.accounts.submitted_by.key());
+        msg!("config: {}", ctx.accounts.config.key());
+        msg!("aggregator_state: {}", ctx.accounts.aggregator_state.key());
+        msg!("range_state: {}", ctx.accounts.range_state.key());
+        msg!("proof_record: {}", ctx.accounts.proof_record.key());
+        // Derive PDAs on-chain and log them for comparison
+        let prog_id = ctx.program_id;
+        let agg_pda = Pubkey::find_program_address(&[b"zksl", b"aggregator"], prog_id).0;
+        let rng_pda = Pubkey::find_program_address(&[b"zksl", b"range"], prog_id).0;
+        let pr_pda = Pubkey::find_program_address(&[b"zksl", b"proof", &proof_hash, &seq.to_le_bytes()], prog_id).0;
+        msg!("expected_aggregator_state: {}", agg_pda);
+        msg!("expected_range_state: {}", rng_pda);
+        msg!("expected_proof_record: {}", pr_pda);
+        msg!("ECHO done");
         Ok(())
     }
 }
@@ -313,6 +349,18 @@ pub struct UpdateConfig<'info> {
     pub admin: Signer<'info>,
     #[account(mut)]
     pub config: Account<'info, Config>,
+}
+
+/// Init state accounts
+#[derive(Accounts)]
+pub struct InitState<'info> {
+    #[account(mut)]
+    pub payer: Signer<'info>,
+    #[account(init, payer = payer, seeds = [b"zksl".as_ref(), b"aggregator".as_ref()], bump, space = 8 + AggregatorState::SIZE)]
+    pub aggregator_state: Account<'info, AggregatorState>,
+    #[account(init, payer = payer, seeds = [b"zksl".as_ref(), b"range".as_ref()], bump, space = 8 + RangeState::SIZE)]
+    pub range_state: Account<'info, RangeState>,
+    pub system_program: Program<'info, System>,
 }
 
 /// Unlock validator accounts
@@ -482,14 +530,51 @@ pub struct AnchorProof<'info> {
     pub submitted_by: Signer<'info>,
     #[account(mut)]
     pub config: Account<'info, Config>,
-    #[account(init_if_needed, payer = submitted_by, seeds = [b"zksl".as_ref(), b"aggregator".as_ref()], bump, space = 8 + AggregatorState::SIZE)]
+    #[account(mut, seeds = [b"zksl".as_ref(), b"aggregator".as_ref()], bump)]
     pub aggregator_state: Account<'info, AggregatorState>,
-    #[account(init_if_needed, payer = submitted_by, seeds = [b"zksl".as_ref(), b"range".as_ref()], bump, space = 8 + RangeState::SIZE)]
+    #[account(mut, seeds = [b"zksl".as_ref(), b"range".as_ref()], bump)]
     pub range_state: Account<'info, RangeState>,
-    #[account(init, payer = submitted_by, seeds = [b"zksl".as_ref(), b"proof".as_ref(), proof_hash.as_ref(), &seq.to_le_bytes()], bump, space = 8 + ProofRecord::SIZE)]
+    #[account(init_if_needed, payer = submitted_by, seeds = [b"zksl".as_ref(), b"proof".as_ref(), proof_hash.as_ref(), &seq.to_le_bytes()], bump, space = 8 + ProofRecord::SIZE)]
     pub proof_record: Account<'info, ProofRecord>,
     /// CHECK: instructions sysvar
+    #[account(address = sysvar_instructions::ID)]
     pub sysvar_instructions: UncheckedAccount<'info>,
+    pub system_program: Program<'info, System>,
+}
+
+#[derive(Accounts)]
+pub struct Ping<'info> {
+    #[account(mut)]
+    pub submitted_by: Signer<'info>,
+    #[account(mut)]
+    pub config: Account<'info, Config>,
+    /// CHECK: debug only
+    pub aggregator_state: UncheckedAccount<'info>,
+    /// CHECK: debug only
+    pub range_state: UncheckedAccount<'info>,
+    /// CHECK: debug only
+    pub proof_record: UncheckedAccount<'info>,
+    /// CHECK: instructions sysvar (not required, but accepted)
+    pub sysvar_instructions: UncheckedAccount<'info>,
+    pub system_program: Program<'info, System>,
+}
+
+#[derive(Accounts)]
+#[instruction(proof_hash: [u8;32], seq: u64)]
+pub struct EchoAccounts<'info> {
+    #[account(mut)]
+    pub submitted_by: Signer<'info>,
+    #[account(mut)]
+    pub config: Account<'info, Config>,
+    /// CHECK: PDA, observed only
+    #[account(seeds = [b"zksl".as_ref(), b"aggregator".as_ref()], bump)]
+    pub aggregator_state: UncheckedAccount<'info>,
+    /// CHECK: PDA, observed only
+    #[account(seeds = [b"zksl".as_ref(), b"range".as_ref()], bump)]
+    pub range_state: UncheckedAccount<'info>,
+    /// CHECK: PDA, observed only
+    #[account(seeds = [b"zksl".as_ref(), b"proof".as_ref(), proof_hash.as_ref(), &seq.to_le_bytes()], bump)]
+    pub proof_record: UncheckedAccount<'info>,
     pub system_program: Program<'info, System>,
 }
 

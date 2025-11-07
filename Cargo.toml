@@ -1,5 +1,5 @@
 [workspace]
-members = ["prover"]
+members = ["programs/validator_lock"]
 resolver = "2"
 
 [workspace.package]
@@ -17,3 +17,6 @@ ed25519-dalek = "2.2"
 hex = "0.4.3"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
+
+[profile.release]
+overflow-checks = true

@@ -13,7 +13,7 @@
 
 **Zero-Knowledge Proof System for Solana Validator State Verification**
 
-[![Solana](https://img.shields.io/badge/Solana-Devnet-14F195?logo=solana&logoColor=white)](https://explorer.solana.com/address/4DDKoz69pr37yBMW9LVeuM7P2GHS9BQ9ctLHydbWeYxQ?cluster=devnet)
+[![Solana](https://img.shields.io/badge/Solana-Devnet-14F195?logo=solana&logoColor=white)](https://explorer.solana.com/address/BCx5eHewBbe6Ft2xXpDXTghuiy5WxM636xN5G45KCp5E?cluster=devnet)
 [![Rust](https://img.shields.io/badge/Rust-1.70+-orange?logo=rust&logoColor=white)](https://www.rust-lang.org)
 [![TypeScript](https://img.shields.io/badge/TypeScript-5.4+-blue?logo=typescript&logoColor=white)](https://www.typescriptlang.org)
 [![Anchor](https://img.shields.io/badge/Anchor-0.30.1-blueviolet)](https://www.anchor-lang.com)
@@ -116,12 +116,13 @@ The zkSealevel system comprises four primary components operating in concert:
     ║                                                               ║
     ║  ┌────────────────────────────────────────────────────────┐  ║
     ║  │         validator_lock Program (Anchor)                │  ║
-    ║  │  Program ID: 4DDKoz69pr37yBMW9LVeuM7P2GHS9BQ9ctLHy... │  ║
+    ║  │  Program ID: BCx5eHewBbe6Ft2xXpDXTghuiy5WxM636xN5G45KCp5E │  ║
     ║  ├────────────────────────────────────────────────────────┤  ║
     ║  │  Instructions:                                         │  ║
-    ║  │  • initialize_config      • anchor_proof               │  ║
-    ║  │  • update_aggregator       • register_validator        │  ║
-    ║  │  • unlock_validator                                    │  ║
+    ║  │  • initialize             • anchor_proof               │  ║
+    ║  │  • register_validator     • unlock_validator           │  ║
+    ║  │  • update_config          • init_state                 │  ║
+    ║  │  • echo_accounts          • ping                       │  ║
     ║  └────────────────────────────────────────────────────────┘  ║
     ║                                                               ║
     ║  ┌──────────────────────────────────────────────────────┐    ║
@@ -262,7 +263,7 @@ Artifacts are deterministically canonicalized using JSON Canonicalization Scheme
 | Account Type      | Seeds                                  | Size (bytes) |
 |-------------------|----------------------------------------|--------------|
 | Config            | `[b"zksl", b"config"]`                 | 168          |
-| AggregatorState   | `[b"zksl", b"aggregator"]`             | 128          |
+| AggregatorState   | `[b"zksl", b"aggregator"]`             | 126          |
 | RangeState        | `[b"zksl", b"range"]`                  | 128          |
 | ProofRecord       | `[b"zksl", b"proof", proof_hash, seq]` | 262          |
 | ValidatorRecord   | `[b"zksl", b"validator", pubkey]`      | 136          |
@@ -296,7 +297,7 @@ cargo run -p zksl-prover -- \
   --out signed_artifact.json \
   --agg-key keys/aggregator.json \
   --chain-id 103 \
-  --program_id 4DDKoz69pr37yBMW9LVeuM7P2GHS9BQ9ctLHydbWeYxQ \
+  --program_id BCx5eHewBbe6Ft2xXpDXTghuiy5WxM636xN5G45KCp5E \
   --seq 1
 ```
 
@@ -329,12 +330,11 @@ cargo run -p zksl-prover -- \
 ```bash
 PORT=8080
 RPC_URL=https://api.devnet.solana.com
-WS_URL=wss://api.devnet.solana.com
-PROGRAM_ID_VALIDATOR_LOCK=4DDKoz69pr37yBMW9LVeuM7P2GHS9BQ9ctLHydbWeYxQ
+PROGRAM_ID_VALIDATOR_LOCK=BCx5eHewBbe6Ft2xXpDXTghuiy5WxM636xN5G45KCp5E
 CHAIN_ID=103
 AGGREGATOR_KEYPAIR_PATH=./keys/aggregator.json
 ARTIFACT_DIR=./orchestrator/data/artifacts
-MIN_FINALITY_COMMITMENT=finalized
+DATABASE_URL=postgresql://postgres:postgres@localhost:5432/zksl
 ```
 
 ### 3. Indexer Service (TypeScript/Node.js)
@@ -358,8 +358,7 @@ MIN_FINALITY_COMMITMENT=finalized
 ```bash
 DATABASE_URL=postgresql://postgres:postgres@localhost:5432/zksl
 RPC_URL=https://api.devnet.solana.com
-WS_URL=wss://api.devnet.solana.com
-PROGRAM_ID_VALIDATOR_LOCK=4DDKoz69pr37yBMW9LVeuM7P2GHS9BQ9ctLHydbWeYxQ
+PROGRAM_ID_VALIDATOR_LOCK=BCx5eHewBbe6Ft2xXpDXTghuiy5WxM636xN5G45KCp5E
 MIN_FINALITY_COMMITMENT=finalized
 ```
 
@@ -367,38 +366,52 @@ MIN_FINALITY_COMMITMENT=finalized
 
 **Location**: `programs/validator_lock/src/lib.rs`
 
-**Program ID (Devnet)**: `4DDKoz69pr37yBMW9LVeuM7P2GHS9BQ9ctLHydbWeYxQ`
+**Program ID (Devnet)**: `BCx5eHewBbe6Ft2xXpDXTghuiy5WxM636xN5G45KCp5E`
 
 **Instructions**:
 
 | Instruction          | Description                                      |
 |----------------------|--------------------------------------------------|
-| `initialize_config`  | Admin-only: set mint, aggregator, chain_id      |
-| `update_aggregator`  | Admin-only: rotate aggregator key after seq     |
+| `initialize`         | Admin-only: set mint, aggregator, chain_id      |
 | `register_validator` | Lock exactly 1 token, create ValidatorRecord    |
 | `unlock_validator`   | Release escrowed token, mark validator unlocked |
+| `update_config`      | Admin-only: update aggregator keys, pause state |
 | `anchor_proof`       | Verify Ed25519 signature, write ProofRecord PDA |
+| `init_state`         | Initialize AggregatorState and RangeState PDAs  |
+| `echo_accounts`      | Debug: log resolved account addresses           |
+| `ping`               | No-op instruction for testing                   |
 
 **Validation Rules** (enforced in `anchor_proof`):
-- ComputeBudget instruction present with ≥200k CU
+- ComputeBudget instruction present with ≥200,000 CU
 - Exactly 1 Ed25519 instruction immediately preceding anchor_proof
 - Ed25519 public key matches current aggregator (or next if seq ≥ activation_seq)
 - Ed25519 message matches constructed 110-byte DS
 - `ds_hash` in instruction payload matches `blake3(DS)`
-- `seq` strictly greater than `AggregatorState::last_seq`
-- `start_slot ≤ end_slot` and `end_slot - start_slot ≤ 2048`
-- `end_slot` strictly greater than `RangeState::last_end_slot`
+- `seq` is monotonically increasing (first proof must be seq=1)
+- `start_slot ≤ end_slot` and `end_slot - start_slot + 1 ≤ 2048`
+- Slot ranges contiguous (start_slot = last_end_slot + 1, first range starts at 1)
+- Clock skew ≤ 120 seconds
+- Config not paused
 
 **Error Codes**:
-- `6000`: MissingComputeBudget
-- `6001`: MissingEd25519Instruction
-- `6002`: InvalidInstructionOrder
-- `6003`: Ed25519VerificationFailed
-- `6004`: DSHashMismatch
-- `6005`: SequenceNotMonotonic
-- `6006`: InvalidSlotRange
-- `6007`: SlotRangeNotMonotonic
-- `6008`: InvalidAggregatorPubkey
+- `6000`: InvalidMint
+- `6001`: InvalidLockAmount
+- `6002`: AlreadyRegistered
+- `6003`: NotRegistered
+- `6004`: EscrowMismatch
+- `6005`: InvalidSignature
+- `6006`: AggregatorMismatch
+- `6007`: ProofAlreadyAnchored
+- `6008`: StatusNotActive
+- `6009`: MathOverflow
+- `6010`: Paused
+- `6011`: Unauthorized
+- `6012`: NonMonotonicSeq
+- `6013`: RangeOverlap
+- `6014`: ClockSkew
+- `6015`: BadEd25519Order
+- `6016`: BadDomainSeparation
+- `6017`: InsufficientBudget
 
 ### 5. CLI Tool (TypeScript/Node.js)
 
@@ -523,7 +536,7 @@ anchor deploy --provider.cluster devnet --program-name validator_lock
 
 # Note the deployed program ID
 anchor keys list
-# validator_lock: 4DDKoz69pr37yBMW9LVeuM7P2GHS9BQ9ctLHydbWeYxQ
+# validator_lock: BCx5eHewBbe6Ft2xXpDXTghuiy5WxM636xN5G45KCp5E
 ```
 
 #### Step 2: Configure Environment
@@ -532,8 +545,7 @@ Create `.env` in project root:
 ```bash
 # Solana Configuration
 RPC_URL=https://api.devnet.solana.com
-WS_URL=wss://api.devnet.solana.com
-PROGRAM_ID_VALIDATOR_LOCK=4DDKoz69pr37yBMW9LVeuM7P2GHS9BQ9ctLHydbWeYxQ
+PROGRAM_ID_VALIDATOR_LOCK=BCx5eHewBbe6Ft2xXpDXTghuiy5WxM636xN5G45KCp5E
 CHAIN_ID=103
 MIN_FINALITY_COMMITMENT=finalized
 
@@ -602,7 +614,7 @@ Migrations applied:
 **Orchestrator**:
 ```bash
 npm --prefix orchestrator run build
-node orchestrator/dist/server.js
+node orchestrator/dist/src/server.js
 # Listening on port 8080
 ```
 
@@ -943,15 +955,15 @@ All jobs must pass before merging.
 
 ```bash
 # Start infrastructure (Postgres, Redis, local validator)
-docker-compose up -d
+docker compose -f docker/compose.yml up -d
 
 # Build and start services
 npm run build:services
-npm run start:orchestrator &
-npm run start:indexer &
+npm --prefix orchestrator run start &
+npm --prefix indexer run start &
 
 # Tail logs
-docker-compose logs -f orchestrator indexer
+docker compose -f docker/compose.yml logs -f orchestrator indexer
 ```
 
 ---
@@ -1011,7 +1023,7 @@ E2E script performs:
 ╠══════════════════════════════════════════════════════════════════╣
 ║                                                                  ║
 ║  Deployment Status:          [████████████████████████] 100%    ║
-║    └─ Devnet Program: 4DDKoz69pr37yBMW9LVeuM7P2GHS9BQ9ctLHy...  ║
+║    └─ Devnet Program: BCx5eHewBbe6Ft2xXpDXTghuiy5WxM636xN5G45KCp5E  ║
 ║                                                                  ║
 ║  Core Services:              [████████████████████████] 100%    ║
 ║    ├─ Orchestrator:          OPERATIONAL                        ║
@@ -1051,16 +1063,16 @@ E2E script performs:
 
 ### Current State
 
-- **Program Deployment**: Successfully deployed to Devnet at `4DDKoz69pr37yBMW9LVeuM7P2GHS9BQ9ctLHydbWeYxQ`
+- **Program Deployment**: Successfully deployed to Devnet at `BCx5eHewBbe6Ft2xXpDXTghuiy5WxM636xN5G45KCp5E`
 - **Orchestrator**: Operational on Devnet with full artifact handling and transaction submission
-- **Indexer**: Monitoring Devnet program accounts and syncing to PostgreSQL
-- **Prover**: Reference implementation complete; STARK circuit integration in progress
+- **Indexer**: Monitoring Devnet program accounts and syncing to PostgreSQL with commitment tracking
+- **Prover**: Reference implementation complete with Blake3 hashing and Ed25519 signing; STARK circuit integration in progress
 - **CI/CD**: Test suites configured with conformance validation
 - **Test Coverage**:
-  - Orchestrator: Unit tests + property-based tests + KATs
-  - Indexer: Unit tests + codec tests
+  - Orchestrator: Unit tests + KATs + idempotency tests
+  - Indexer: Unit tests + Borsh codec tests + commitment reconciliation
   - Conformance: Node ↔ Rust proof_hash validation passing
-  - Program: Rust unit tests covering account sizes, DS prefix, program ID
+  - Program: Rust unit tests covering account sizes (Config=168, ValidatorRecord=136, ProofRecord=262), DS prefix (14 bytes), error codes (6000-6017)
 
 ### Completed Objectives (Devnet POC Execution Plan)
 
@@ -1087,13 +1099,15 @@ E2E script performs:
 - [ ] Performance benchmarking and optimization (target: <2s end-to-end latency)
 - [ ] Monitoring dashboard with Grafana + Prometheus
 
-### Known Limitations (POC Phase)
+### Known Limitations and Implementation Notes
 
-- Prover currently uses reference computation; full zk-BPF AIR in development
-- Single aggregator key (rotation implemented but not exercised in POC)
-- No DA layer integration (da_params field reserved for future use)
-- Indexer uses polling + WebSocket; consider dedicated Geyser plugin for scale
-- CLI requires manual keypair management; consider hardware wallet integration
+- **BPF Stack Constraints**: The `init_state` instruction must be called before the first `anchor_proof` to initialize `AggregatorState` and `RangeState` PDAs. This separation was necessary to avoid BPF stack overflow (4096 byte limit) when combining initialization with full proof validation logic.
+- **Prover Integration**: Prover currently uses reference computation for DS signing; full zk-BPF AIR with Winterfell STARK circuits is available via feature flag (`stark`) but not yet integrated into orchestrator verification hook.
+- **Aggregator Key Rotation**: Rotation mechanism implemented with `activation_seq` support; admin can update aggregator keys via `update_config` instruction.
+- **Data Availability**: `da_params` field (12 bytes) in `ProofRecord` is reserved for future data availability sampling parameters; currently zeroed.
+- **Indexer Scalability**: Current implementation uses WebSocket subscriptions with polling fallback; for high-throughput production use, consider dedicated Geyser plugin.
+- **Key Management**: CLI requires manual Solana keypair files; production deployments should consider hardware wallet or MPC integration.
+- **Commitment Tracking**: Indexer reconciles commitment levels asynchronously; initial proofs appear with `commitment_level=0` (processed) and upgrade to 1 (confirmed) and 2 (finalized) within minutes.
 
 ---
 
@@ -1101,94 +1115,99 @@ E2E script performs:
 
 ### Comprehensive Test Report
 
-**[Total_Devnet_Test_Reports.md](./Total_Devnet_Test_Reports.md)**
+**Test Validation Summary**
 
 ```
 ╔══════════════════════════════════════════════════════════════════╗
-║              COMPREHENSIVE TEST VALIDATION REPORT                ║
+║              zkSealevel Test Validation Status                   ║
 ╠══════════════════════════════════════════════════════════════════╣
 ║                                                                  ║
-║  A complete, professionally documented validation report         ║
-║  covering all test categories executed on the zkSealevel         ║
-║  system deployed to Solana Devnet.                               ║
-║                                                                  ║
-║  Coverage Areas:                                                 ║
+║  Test Coverage:                                                  ║
 ║  • Known Answer Tests (KATs)                     [5 suites]      ║
-║  • Rust Unit Tests                               [3 tests]       ║
-║  • Static Analysis (Clippy)                      [2 modules]     ║
+║  • Rust Unit Tests                               [2 tests]       ║
 ║  • On-Chain Program Verification                 [DEPLOYED]      ║
-║  • Protocol Conformance Validation               [VERIFIED]      ║
+║  • Protocol Conformance Validation               [PASSING]       ║
 ║                                                                  ║
 ║  Test Methodology:                                               ║
 ║  • Domain Separation (DS) layout verification                    ║
 ║  • Anchor instruction Borsh encoding validation                  ║
-║  • Canonical JSON serialization (JCS) compliance                 ║
+║  • Canonical JSON serialization compliance                       ║
 ║  • Program Derived Address (PDA) derivation                      ║
 ║  • Account size specification matching                           ║
-║  • Strictest Clippy lints (pedantic + nursery)                   ║
 ║                                                                  ║
-║  Golden Vectors:                                                 ║
-║  • DS hash computation with fixed inputs                         ║
-║  • Canonical JSON determinism across key orderings               ║
-║  • Anchor discriminator (sha256_8) verification                  ║
-║  • PDA seed derivation against known addresses                   ║
+║  Golden Vectors (Known Answer Tests):                            ║
+║  • scripts/kats/ds_kat.js            - DS construction           ║
+║  • scripts/kats/ds_negative_kat.js   - Error handling            ║
+║  • scripts/kats/anchor_proof_kat.js  - Borsh encoding            ║
+║  • scripts/kats/canonical_kat.js     - JSON canonicalization     ║
+║  • scripts/kats/pda_kat.js           - PDA derivation            ║
+║                                                                  ║
+║  Conformance Testing:                                            ║
+║  • scripts/conformance.js            - Node ↔ Rust validation    ║
 ║                                                                  ║
 ║  Quality Metrics:                                                ║
-║  • Zero unsafe code blocks                                       ║
-║  • No panic paths (all errors via Result<T,E>)                   ║
-║  • No unwrap/expect calls in production code                     ║
-║  • 100% pedantic lint compliance                                 ║
+║  • #![forbid(unsafe_code)] enforced                              ║
+║  • #![deny(clippy::unwrap_used, clippy::expect_used)]            ║
+║  • All errors via Result<T,E>                                    ║
+║  • Account sizes verified: Config=168, ValidatorRecord=136,      ║
+║    AggregatorState=126, RangeState=128, ProofRecord=262          ║
+║  • DS prefix verified: "zKSL/anchor/v1" (14 bytes)               ║
+║  • DS total length verified: 110 bytes                           ║
 ║                                                                  ║
-║  Report Structure:                                               ║
-║  1. Executive Summary                                            ║
-║  2. Known Answer Tests (KATs)                                    ║
-║  3. Rust Unit Tests                                              ║
-║  4. Static Analysis (Clippy)                                     ║
-║  5. On-Chain Program Verification                                ║
-║  6. Protocol Conformance Summary                                 ║
-║  7. Code Quality Metrics                                         ║
-║  8. Test Execution Environment                                   ║
-║  9. Golden Vectors & Test Traceability                           ║
-║  10. Risk Assessment & Security Considerations                   ║
-║  11. Conclusion & Production Readiness                           ║
+║  Deployment Status:                                              ║
+║  • Program ID: BCx5eHewBbe6Ft2xXpDXTghuiy5WxM636xN5G45KCp5E      ║
+║  • Network: Solana Devnet                                        ║
+║  • Status: OPERATIONAL                                           ║
 ║                                                                  ║
-║  Status: ALL TESTS PASSING                       [100% SUCCESS]  ║
+║  Test Execution:                                                 ║
+║  • npm run test:kats     - Run all KATs                          ║
+║  • npm run conformance   - Cross-language validation             ║
+║  • cargo test            - Rust unit tests                       ║
 ║                                                                  ║
 ╚══════════════════════════════════════════════════════════════════╝
 ```
 
-**Report Highlights**:
+**Validation Highlights**:
 
-The Total Devnet Test Report provides exhaustive documentation of all validation procedures performed on the zkSealevel system. This professional-grade report includes:
+The zkSealevel test suite provides comprehensive validation of the protocol implementation:
 
-- **Detailed Test Specifications**: Each test suite is documented with purpose, methodology, validation criteria, and technical notes
-- **Account Size Verification**: Byte-precise validation of all on-chain account layouts (Config: 168 bytes, ValidatorRecord: 136 bytes, ProofRecord: 262 bytes)
-- **Protocol Compliance Matrix**: Complete traceability from protocol requirements to test coverage
-- **Golden Vector Validation**: Known Answer Tests with fixed inputs and expected outputs for reproducibility
-- **Cryptographic Integrity**: Blake3 hash computation, Ed25519 signature verification, domain separation message construction
-- **Static Analysis Results**: Strictest Clippy lints enforced including `clippy::all`, `clippy::pedantic`, `clippy::nursery`, with zero warnings
-- **Production Readiness Assessment**: Comprehensive evaluation of system readiness for Devnet integration testing
+- **Account Size Verification**: Byte-precise validation of all on-chain account layouts matching specification exactly
+  - Config: 168 bytes (32+32+32+32+8+8+1+1+22)
+  - ValidatorRecord: 136 bytes (32+32+8+1+8+55)
+  - AggregatorState: 126 bytes (32+8+86)
+  - RangeState: 128 bytes (8+120)
+  - ProofRecord: 262 bytes (16+8+8+32+4+32+32+32+32+8+8+32+1+12+5)
+
+- **Protocol Constants**: All constants verified against specification
+  - DS_PREFIX: "zKSL/anchor/v1" (14 bytes)
+  - MAX_SLOTS_PER_ARTIFACT: 2048
+  - MAX_CLOCK_SKEW_SECS: 120
+
+- **Cryptographic Integrity**: Blake3 hash computation, Ed25519 signature verification, 110-byte domain separation message construction
+
+- **Code Quality**: Strictest Rust lints enforced
+  - `#![forbid(unsafe_code)]`
+  - `#![deny(clippy::all, clippy::pedantic, clippy::nursery, clippy::cargo)]`
+  - `#![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic)]`
 
 **Key Validation Areas**:
 
-| Category | Tests | Status | Documentation |
-|----------|-------|--------|---------------|
-| Domain Separation Protocol | 2 KATs | PASS | DS layout, negative cases |
-| Anchor Instruction Encoding | 1 KAT | PASS | Borsh serialization, discriminators |
-| Canonical JSON (JCS) | 1 KAT | PASS | Deterministic serialization |
-| PDA Derivation | 1 KAT | PASS | All account types verified |
-| Rust Unit Tests | 3 tests | PASS | Account sizes, DS prefix, program ID |
-| Clippy Analysis | 2 modules | PASS | Zero warnings (strictest lints) |
-| On-Chain Verification | 1 check | PASS | Program deployed and active |
-
-**Access**: View the complete report at [`Total_Devnet_Test_Reports.md`](./Total_Devnet_Test_Reports.md)
+| Category | Tests | Status | Location |
+|----------|-------|--------|----------|
+| Domain Separation Protocol | 2 KATs | PASSING | scripts/kats/ds_kat.js, ds_negative_kat.js |
+| Anchor Instruction Encoding | 1 KAT | PASSING | scripts/kats/anchor_proof_kat.js |
+| Canonical JSON | 1 KAT | PASSING | scripts/kats/canonical_kat.js |
+| PDA Derivation | 1 KAT | PASSING | scripts/kats/pda_kat.js |
+| Rust Unit Tests | 2 tests | PASSING | programs/validator_lock/src/lib.rs |
+| Conformance (Node ↔ Rust) | 1 suite | PASSING | scripts/conformance.js |
+| On-Chain Deployment | Verified | OPERATIONAL | BCx5eHewBbe6Ft2xXpDXTghuiy5WxM636xN5G45KCp5E |
 
 ---
 
 ### Protocol Specifications
 
 For detailed protocol specifications, refer to:
-- **Devnet POC Execution Plan**: `Devnet-POC-Execution-Plan.md` — byte-precise protocol contracts, account layouts, instruction encodings
+- **Technical Specification**: `TECHNICAL_SPECIFICATION.md` — byte-precise protocol contracts, account layouts, instruction encodings
 - **Sprint Plan**: `Devnet-Sprint-Plan.md` — development tasks and acceptance criteria
 - **Testing Gap Analysis**: `Devnet-Testing-Gap-Analysis.md` — test coverage matrix and validation strategy
 

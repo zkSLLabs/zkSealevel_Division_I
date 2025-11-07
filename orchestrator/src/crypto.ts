@@ -1,4 +1,5 @@
 import { hash as blake3hash } from "blake3";
+import { createHash } from "node:crypto";
 
 export function buildDS(params: {
   chainId: bigint;
@@ -63,9 +64,7 @@ export function uuidFromHash32(hash: Uint8Array): string {
 }
 
 export function sha256_8(s: string): Buffer {
-  // eslint-disable-next-line @typescript-eslint/no-require-imports, @typescript-eslint/no-var-requires
-  const crypto = require("node:crypto") as typeof import("node:crypto");
-  const h = crypto.createHash("sha256").update(s, "utf8").digest();
+  const h = createHash("sha256").update(s, "utf8").digest();
   return h.subarray(0, 8);
 }
 
@@ -89,30 +88,31 @@ export function u32le(n: number): Buffer {
 
 export function encodeAnchorProofArgsBorsh(params: {
   artifactId: Uint8Array;
+  proofHash32: Buffer;
+  seqLe: Buffer;
   startLe: Buffer;
   endLe: Buffer;
-  proofHash32: Buffer;
   artifactLen: number;
   stateRootBefore: Uint8Array;
   stateRootAfter: Uint8Array;
   aggregatorPubkey: Uint8Array;
   timestampLe: Buffer;
-  seqLe: Buffer;
   dsHash32: Buffer;
 }): Buffer {
   const disc = sha256_8("global:anchor_proof");
+  // Match Rust function arg order: artifact_id, proof_hash, seq, start_slot, end_slot, artifact_len, state_root_before, state_root_after, aggregator_pubkey, timestamp, ds_hash
   const payload = Buffer.concat([
-    Buffer.from(params.artifactId),
-    params.startLe,
-    params.endLe,
-    params.proofHash32,
-    u32le(params.artifactLen),
-    Buffer.from(params.stateRootBefore),
-    Buffer.from(params.stateRootAfter),
-    Buffer.from(params.aggregatorPubkey),
-    params.timestampLe,
-    params.seqLe,
-    params.dsHash32,
+    Buffer.from(params.artifactId),       // arg 0
+    params.proofHash32,                    // arg 1
+    params.seqLe,                          // arg 2
+    params.startLe,                        // arg 3
+    params.endLe,                          // arg 4
+    u32le(params.artifactLen),            // arg 5
+    Buffer.from(params.stateRootBefore),  // arg 6
+    Buffer.from(params.stateRootAfter),   // arg 7
+    Buffer.from(params.aggregatorPubkey), // arg 8
+    params.timestampLe,                    // arg 9
+    params.dsHash32,                       // arg 10
   ]);
   return Buffer.concat([disc, payload]);
 }
