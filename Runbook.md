@@ -204,7 +204,7 @@ If you don't have a Solana keypair, create one:
 solana-keygen new --outfile ~/.config/solana/id.json
 ```
 
-**⚠️ IMPORTANT**: Save your seed phrase securely! For Devnet testing, you can skip this, but for production, never lose your seed phrase.
+**IMPORTANT**: Save your seed phrase securely! For Devnet testing, you can skip this, but for production, never lose your seed phrase.
 
 #### Generate Fee Payer Keypair (Optional)
 
@@ -317,7 +317,7 @@ NO_COLOR=1
 EOF
 ```
 
-**⚠️ Replace `PROGRAM_ID_VALIDATOR_LOCK` with your actual deployed program ID!**
+**NOTE**: Replace `PROGRAM_ID_VALIDATOR_LOCK` with your actual deployed program ID.
 
 ### 4. Initialize On-Chain Config
 
@@ -360,10 +360,10 @@ npx tsx cli/src/main.ts init-config \
 - `--chain-id`: Chain ID for this deployment (103 = Devnet, per protocol spec)
 
 **Expected Output:**
-```
-[zksl][cli] Initializing config PDA...
-[zksl][cli] Config initialized successfully!
-[zksl][cli] Transaction: https://explorer.solana.com/tx/<TX_SIGNATURE>?cluster=devnet
+```json
+{
+  "txid": "<TRANSACTION_SIGNATURE>"
+}
 ```
 
 #### Verify Config Initialization
@@ -381,7 +381,7 @@ https://explorer.solana.com/address/<CONFIG_PDA_ADDRESS>?cluster=devnet
 ### 5. Register Validator
 
 Validators must register before they can have proofs anchored on their behalf. Registration requires:
-- 1 ZKSL token (locked in escrow)
+- ZKSL tokens (amount locked in escrow as determined by the program)
 - Registration fee (paid in SOL)
 
 #### Mint ZKSL Tokens to Your Wallet
@@ -403,11 +403,15 @@ npx tsx cli/src/main.ts register \
 ```
 
 **Expected Output:**
+```json
+{
+  "txid": "<TRANSACTION_SIGNATURE>"
+}
 ```
-[zksl][cli] Registering validator...
-[zksl][cli] Validator registered successfully!
-[zksl][cli] Validator PDA: <VALIDATOR_PDA_ADDRESS>
-[zksl][cli] Transaction: https://explorer.solana.com/tx/<TX_SIGNATURE>?cluster=devnet
+
+You can view the transaction on Solana Explorer:
+```
+https://explorer.solana.com/tx/<TRANSACTION_SIGNATURE>?cluster=devnet
 ```
 
 #### Verify Registration
@@ -989,10 +993,10 @@ export RPC_URL=https://your-custom-rpc-endpoint.com
 
 #### Transaction Confirmation Time
 
-Average times on Devnet:
-- **Processed**: ~400ms
-- **Confirmed**: ~8-13 seconds
-- **Finalized**: ~13-20 seconds
+Typical times on Devnet (may vary based on network conditions):
+- **Processed**: Sub-second
+- **Confirmed**: Several seconds
+- **Finalized**: 30+ seconds (requires 32 confirmed blocks)
 
 ---
 
@@ -1115,7 +1119,5 @@ Validator PDA:       ["zksl", "validator", <validator_pubkey:32>]
 
 ---
 
-**Last Updated:** November 7, 2024  
 **Version:** 0.1.0  
 **Maintained by:** zkSL Labs
-
