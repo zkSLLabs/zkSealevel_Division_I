@@ -419,7 +419,7 @@ async function submitAnchorProof(params: {
   }
 
   // TypeScript doesn't have ComputeBudgetProgram in web3.js types, so we need to access it via dynamic import
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any, @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-member-access
   const ComputeBudgetProgram = (web3 as any).ComputeBudgetProgram;
   // eslint-disable-next-line @typescript-eslint/no-unsafe-call, @typescript-eslint/no-unsafe-member-access
   const computeIx = ComputeBudgetProgram.setComputeUnitLimit({ units: 200_000 }) as typeof web3.TransactionInstruction.prototype;
