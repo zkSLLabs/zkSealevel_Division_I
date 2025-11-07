@@ -79,6 +79,12 @@ jobs:
       - name: Run tests
         run: npm run test:all
 
+      - name: Setup test keys
+        run: |
+          mkdir -p keys
+          cp keys/aggregator.example.json keys/aggregator.json
+          cp keys/sol_agg.example.json keys/sol_agg.json
+
       - name: Conformance (Node vs Rust)
         run: npm run conformance
 
