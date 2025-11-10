@@ -7,7 +7,7 @@ members = [
 ]
 
 [provider]
-cluster = "Localnet"
+cluster = "Devnet"
 wallet = "~/.config/solana/id.json"
 
 #[programs.localnet]

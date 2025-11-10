@@ -27,6 +27,10 @@ const AGG_KEY_PATH = process.env.AGGREGATOR_KEYPAIR_PATH || "./keys/aggregator.j
 const ARTIFACT_DIR = process.env.ARTIFACT_DIR || "./orchestrator/data/artifacts";
 const DATABASE_URL = process.env.DATABASE_URL || "postgres://postgres:postgres@localhost:5432/zksl";
 
+function isStarkRequired(): boolean {
+  return (process.env.REQUIRE_STARK ?? "1") !== "0";
+}
+
 type Artifact = Record<string, unknown> & {
   artifact_id?: string | undefined;
   start_slot?: number | undefined;
@@ -168,6 +172,7 @@ app.post("/prove", async (req: Request, res: Response) => {
   artifacts.set(artifactId, { artifact_id: artifactId, start_slot: artifact.start_slot, end_slot: artifact.end_slot, state_root_before: srb, state_root_after: sra, artifact_len, proof_hash: proofHashHex });
   // Optional STARK proof generation (Phase A): gated by REQUIRE_STARK env
   if (process.env.REQUIRE_STARK === "1") {
+  if (isStarkRequired()) {
     try {
       const proofPath = path.join(dir, `${artifactId}.proof.json`);
       const r = spawnSync("prover", ["stark-prove", "--start", String(artifact.start_slot), "--end", String(artifact.end_slot), "--out", proofPath], { stdio: "inherit" });
@@ -269,7 +274,7 @@ app.post("/anchor", async (req: Request, res: Response) => {
   });
   const proofHash = blake3hash(Buffer.from(minimal, "utf8"));
   // If STARK verification is required, verify sidecar proof file before proceeding
-  if (process.env.REQUIRE_STARK === "1") {
+  if (isStarkRequired()) {
     try {
       const now = new Date();
       const y = String(now.getUTCFullYear());
