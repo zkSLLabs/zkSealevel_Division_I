@@ -104,6 +104,7 @@ Components:
 ---
 
 ### 6) Protocol Contracts (Normative, Byte-Precise)
+North Star Route public inputs are now preferred end-to-end. The prover emits `{ C_in, C_out, H_B, S_in, S_out }` (see README), and the orchestrator canonicalizes this JSON and computes `stark_pi_hash = blake3(UTF8(canonical_json(PI)))`. If absent, the legacy minimal PI is used for backward compatibility.
 
 #### 6.1 Domain Separation (unchanged from v1)
 Length = 110 bytes (MUST be exact). Layout (offset, length, type):
@@ -340,11 +341,14 @@ On `/anchor`, the orchestrator MUST:
 
 ### 12) Toolchains and Reproducibility
 
-- Solana CLI ≥ 1.18.x; Anchor CLI = 0.30.1.
+- Solana CLI ~ 1.18.x; Anchor CLI = 0.30.1.
 - Node = 20.x LTS; TypeScript = 5.4.x; Rust ≥ 1.75 (stable).
-- Crates pinned (examples): `blake3 = "1.5.*"`, `ed25519-dalek = "2.1.*"`, `winterfell = "0.7.*"`.
+- Crates pinned (examples): `blake3 = "1.5.*"`, `ed25519-dalek = "1.0.1"`, `winterfell = "0.13.1"`.
 - Deterministic builds for Rust prover: `RUSTFLAGS="-C codegen-units=1 -C strip=symbols -C panic=abort"` recommended for release.
 - Lock files MUST be committed; CI MUST fail on lock drift.
+
+Compatibility note:
+- To target newer Solana toolchains beyond 1.18.x, upgrade Anchor to 0.32.x and apply required code updates (IDL/discriminators/PDA seed typing). Otherwise pin to Solana CLI ~1.18.x with Anchor 0.30.1 as above.
 
 ---
 

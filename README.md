@@ -13,11 +13,11 @@
 
 **Zero-Knowledge Proof System for Solana Validator State Verification**
 
-[![Solana](https://img.shields.io/badge/Solana-Devnet-14F195?logo=solana&logoColor=white)](https://explorer.solana.com/address/BCx5eHewBbe6Ft2xXpDXTghuiy5WxM636xN5G45KCp5E?cluster=devnet)
+[![Solana](https://img.shields.io/badge/Solana-Devnet-14F195?logo=solana&logoColor=white)](https://explorer.solana.com/address/<YOUR_PROGRAM_ID>?cluster=devnet)
 [![Rust](https://img.shields.io/badge/Rust-1.70+-orange?logo=rust&logoColor=white)](https://www.rust-lang.org)
 [![TypeScript](https://img.shields.io/badge/TypeScript-5.4+-blue?logo=typescript&logoColor=white)](https://www.typescriptlang.org)
 [![Anchor](https://img.shields.io/badge/Anchor-0.30.1-blueviolet)](https://www.anchor-lang.com)
-[![License](https://img.shields.io/badge/License-Proprietary-red)](LICENSE)
+[![License](https://img.shields.io/badge/License-Apache--2.0-blue)](LICENSE)
 [![CI Status](https://img.shields.io/badge/CI-Passing-success)](https://github.com/zkSLLabs/zkSealevel_Division_I/actions)
 
 [Documentation](#table-of-contents) • [Architecture](#architecture) • [Deployment](#deployment-guide) • [API Reference](#api-reference)
@@ -116,7 +116,7 @@ The zkSealevel system comprises four primary components operating in concert:
     ║                                                               ║
     ║  ┌────────────────────────────────────────────────────────┐  ║
     ║  │         validator_lock Program (Anchor)                │  ║
-    ║  │  Program ID: BCx5eHewBbe6Ft2xXpDXTghuiy5WxM636xN5G45KCp5E │  ║
+    ║  │  Program ID: <YOUR_PROGRAM_ID>                         │  ║
     ║  ├────────────────────────────────────────────────────────┤  ║
     ║  │  Instructions:                                         │  ║
     ║  │  • initialize             • anchor_proof               │  ║
@@ -147,6 +147,26 @@ The zkSealevel system comprises four primary components operating in concert:
 ---
 
 ## Protocol Specifications
+### North Star Route: Public Inputs v2 (C_in, C_out, H_B, S_in, S_out)
+
+To strengthen auditability and align with Operation Ghost Ship – North Star Route, the prover now emits an expanded set of public inputs that bind the proof to a well‑defined block window and its touched accounts:
+
+- C_in: Blake3 commitment of the initial state (first slot’s root in the window), hex32
+- C_out: Blake3 commitment of the final state (last slot’s root in the window), hex32
+- H_B: Block‑window digest (Blake3 over per‑slot state roots), hex32
+- S_in: List of account→value pairs at window start, serialized as [{ account, value }], value is hex32
+- S_out: List of account→value pairs at window end, serialized as [{ account, value }], value is hex32
+
+Canonicalization:
+- The orchestrator canonicalizes the PI set as a JSON object with lexicographically sorted keys and stable array order, then computes:
+- stark_pi_hash = blake3(UTF8(canonical_json({ C_in, C_out, H_B, S_in, S_out })))
+
+Anchoring:
+- The orchestrator verifies the STARK sidecar and computes stark_pi_hash from the PI set when present, falling back to the minimal legacy PI format if needed.
+- On v2, stark_pi_hash and stark_proof_hash are submitted to the program and stored on‑chain (and mirrored to DB), providing a durable receipt that binds the proof to the PI set.
+
+Compatibility:
+- Older proofs without the PI set remain supported; the orchestrator automatically uses the legacy PI hash when v2 fields are absent.
 
 ### Domain Separation (DS) Message Layout
 
@@ -297,7 +317,7 @@ cargo run -p zksl-prover -- \
   --out signed_artifact.json \
   --agg-key keys/aggregator.json \
   --chain-id 103 \
-  --program_id BCx5eHewBbe6Ft2xXpDXTghuiy5WxM636xN5G45KCp5E \
+  --program_id <YOUR_PROGRAM_ID> \
   --seq 1
 ```
 
@@ -329,10 +349,10 @@ cargo run -p zksl-prover -- \
 **Configuration** (via environment):
 ```bash
 PORT=8080
-RPC_URL=https://api.devnet.solana.com
-PROGRAM_ID_VALIDATOR_LOCK=BCx5eHewBbe6Ft2xXpDXTghuiy5WxM636xN5G45KCp5E
+RPC_URL=https://api/devnet.solana.com
+PROGRAM_ID_VALIDATOR_LOCK=<YOUR_PROGRAM_ID>
 CHAIN_ID=103
-AGGREGATOR_KEYPAIR_PATH=./keys/aggregator.json
+AGGREGATOR_KEYPAIR_PATH=./keys/aggregator.example.json
 ARTIFACT_DIR=./orchestrator/data/artifacts
 DATABASE_URL=postgresql://postgres:postgres@localhost:5432/zksl
 ```
@@ -358,7 +378,7 @@ DATABASE_URL=postgresql://postgres:postgres@localhost:5432/zksl
 ```bash
 DATABASE_URL=postgresql://postgres:postgres@localhost:5432/zksl
 RPC_URL=https://api.devnet.solana.com
-PROGRAM_ID_VALIDATOR_LOCK=BCx5eHewBbe6Ft2xXpDXTghuiy5WxM636xN5G45KCp5E
+PROGRAM_ID_VALIDATOR_LOCK=<YOUR_PROGRAM_ID>
 MIN_FINALITY_COMMITMENT=finalized
 ```
 
@@ -366,7 +386,7 @@ MIN_FINALITY_COMMITMENT=finalized
 
 **Location**: `programs/validator_lock/src/lib.rs`
 
-**Program ID (Devnet)**: `BCx5eHewBbe6Ft2xXpDXTghuiy5WxM636xN5G45KCp5E`
+**Program ID (Devnet)**: `<YOUR_PROGRAM_ID>`
 
 **Instructions**:
 
@@ -536,7 +556,7 @@ anchor deploy --provider.cluster devnet --program-name validator_lock
 
 # Note the deployed program ID
 anchor keys list
-# validator_lock: BCx5eHewBbe6Ft2xXpDXTghuiy5WxM636xN5G45KCp5E
+# validator_lock: <YOUR_PROGRAM_ID>
 ```
 
 #### Step 2: Configure Environment
@@ -545,7 +565,7 @@ Create `.env` in project root:
 ```bash
 # Solana Configuration
 RPC_URL=https://api.devnet.solana.com
-PROGRAM_ID_VALIDATOR_LOCK=BCx5eHewBbe6Ft2xXpDXTghuiy5WxM636xN5G45KCp5E
+PROGRAM_ID_VALIDATOR_LOCK=<YOUR_PROGRAM_ID>
 CHAIN_ID=103
 MIN_FINALITY_COMMITMENT=finalized
 
@@ -1023,7 +1043,7 @@ E2E script performs:
 ╠══════════════════════════════════════════════════════════════════╣
 ║                                                                  ║
 ║  Deployment Status:          [████████████████████████] 100%    ║
-║    └─ Devnet Program: BCx5eHewBbe6Ft2xXpDXTghuiy5WxM636xN5G45KCp5E  ║
+║    └─ Devnet Program: <YOUR_PROGRAM_ID>                              ║
 ║                                                                  ║
 ║  Core Services:              [████████████████████████] 100%    ║
 ║    ├─ Orchestrator:          OPERATIONAL                        ║
@@ -1063,7 +1083,7 @@ E2E script performs:
 
 ### Current State
 
-- **Program Deployment**: Successfully deployed to Devnet at `BCx5eHewBbe6Ft2xXpDXTghuiy5WxM636xN5G45KCp5E`
+- **Program Deployment**: Successfully deployed to Devnet at `<YOUR_PROGRAM_ID>`
 - **Orchestrator**: Operational on Devnet with full artifact handling and transaction submission
 - **Indexer**: Monitoring Devnet program accounts and syncing to PostgreSQL with commitment tracking
 - **Prover**: Reference implementation complete with Blake3 hashing and Ed25519 signing; STARK circuit integration in progress
@@ -1155,7 +1175,7 @@ E2E script performs:
 ║  • DS total length verified: 110 bytes                           ║
 ║                                                                  ║
 ║  Deployment Status:                                              ║
-║  • Program ID: BCx5eHewBbe6Ft2xXpDXTghuiy5WxM636xN5G45KCp5E      ║
+║  • Program ID: <YOUR_PROGRAM_ID>                                  ║
 ║  • Network: Solana Devnet                                        ║
 ║  • Status: OPERATIONAL                                           ║
 ║                                                                  ║
@@ -1200,7 +1220,7 @@ The zkSealevel test suite provides comprehensive validation of the protocol impl
 | PDA Derivation | 1 KAT | PASSING | scripts/kats/pda_kat.js |
 | Rust Unit Tests | 2 tests | PASSING | programs/validator_lock/src/lib.rs |
 | Conformance (Node ↔ Rust) | 1 suite | PASSING | scripts/conformance.js |
-| On-Chain Deployment | Verified | OPERATIONAL | BCx5eHewBbe6Ft2xXpDXTghuiy5WxM636xN5G45KCp5E |
+| On-Chain Deployment | Verified | OPERATIONAL | <YOUR_PROGRAM_ID> |
 
 ---
 
@@ -1236,8 +1256,9 @@ This is a research project developed by zKSL Labs (zkSealevel Research Team). Fo
 ---
 
 ## License
+Licensed under the Apache License, Version 2.0 (the "License"); you may not use this project except in compliance with the License. You may obtain a copy of the License in the `LICENSE` file at the repository root.
 
-Copyright zKSL Labs (zkSealevel Research Team). All rights reserved.
+Unless required by applicable law or agreed to in writing, software distributed under the License is distributed on an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the specific language governing permissions and limitations under the License.
 
 ---
 

@@ -8,11 +8,12 @@ import * as fs from "fs";
 import { promises as fsp } from "fs";
 import * as path from "path";
 import { Client as PgClient } from "pg";
-import { encodeAnchorProofArgsBorsh, i64le, u64le, canonicalize, buildDS } from "./crypto.js";
+import { encodeAnchorProofArgsBorsh, encodeAnchorProofV2ArgsBorsh, i64le, u64le, canonicalize, buildDS } from "./crypto.js";
 import { mapProgramError } from "./errors.js";
 import { fetchConfig, fetchLastSeq } from "./onchain.js";
 import { spawnSync } from "child_process";
 import type { Commitment } from "@solana/web3.js";
+import { signWithHsmEd25519 } from "./hsm.js";
 
 dotenv.config({ path: process.cwd() + "/.env" });
 
@@ -26,6 +27,8 @@ const CHAIN_ID = BigInt(process.env.CHAIN_ID || "103");
 const AGG_KEY_PATH = process.env.AGGREGATOR_KEYPAIR_PATH || "./keys/aggregator.json";
 const ARTIFACT_DIR = process.env.ARTIFACT_DIR || "./orchestrator/data/artifacts";
 const DATABASE_URL = process.env.DATABASE_URL || "postgres://postgres:postgres@localhost:5432/zksl";
+const AGGREGATOR_HSM_URI = process.env.AGGREGATOR_HSM_URI || "";
+const LOCAL_MODE = (process.env.LOCAL_MODE || "0") === "1";
 
 function isStarkRequired(): boolean {
   return (process.env.REQUIRE_STARK ?? "1") !== "0";
@@ -47,6 +50,7 @@ const IDEMP_TTL_MS = 24 * 60 * 60 * 1000;
 type CachedResponse = { status: number; body: unknown; ts: number };
 const idempotencyCache = new Map<string, CachedResponse>();
 let idemSetCounter = 0;
+let localSeq: bigint = 0n;
 
 function getIdemKey(req: Request): string | null {
   const raw = req.headers["idempotency-key"];
@@ -86,6 +90,11 @@ function enforceIdempotency(req: Request, res: Response, next: () => void) {
 }
 
 app.use(enforceIdempotency);
+
+function shouldUseV2(): boolean {
+  // Operation-Ghost-Ship: Testnet must use v2 (CHAIN_ID=102), or explicit override
+  return (process.env.CHAIN_ID || "") === "102" || (process.env.USE_V2 || "") === "1";
+}
 
 function loadAggregatorSecret(): Uint8Array {
   const raw = fs.readFileSync(AGG_KEY_PATH, { encoding: "utf8" });
@@ -139,8 +148,8 @@ app.post("/prove", async (req: Request, res: Response) => {
   if (window > 2048) {
     return res.status(400).json({ error: { code: "BadRequest", message: "slot window exceeds MAX_SLOTS_PER_ARTIFACT", details: { max: 2048 } } });
   }
-  const srb = normalizeHex32(artifact.state_root_before);
-  const sra = normalizeHex32(artifact.state_root_after);
+  let srb = normalizeHex32(artifact.state_root_before);
+  let sra = normalizeHex32(artifact.state_root_after);
   const minimal = canonicalize({
     start_slot: artifact.start_slot,
     end_slot: artifact.end_slot,
@@ -171,15 +180,51 @@ app.post("/prove", async (req: Request, res: Response) => {
   await fsp.writeFile(target, Buffer.from(canonical, "utf8"));
   artifacts.set(artifactId, { artifact_id: artifactId, start_slot: artifact.start_slot, end_slot: artifact.end_slot, state_root_before: srb, state_root_after: sra, artifact_len, proof_hash: proofHashHex });
   // Optional STARK proof generation (Phase A): gated by REQUIRE_STARK env
-  if (process.env.REQUIRE_STARK === "1") {
   if (isStarkRequired()) {
     try {
+      // Step 1: Generate witness from RPC (if not provided)
+      const witnessPath = path.join(dir, `${artifactId}.witness.json`);
+      const rpcUrl = RPC_URL || "https://api.devnet.solana.com";
+      
+      // Check if witness already exists, else generate
+      if (!fs.existsSync(witnessPath)) {
+        const witnessRes = spawnSync("prover", [
+          "generate-witness",
+          "--rpc", rpcUrl,
+          "--start", String(artifact.start_slot),
+          "--end", String(artifact.end_slot),
+          "--out", witnessPath
+        ], { stdio: "inherit" });
+        
+        if (witnessRes.status !== 0) {
+          // Witness generation failed, fallback to provided state roots
+          console.warn("Witness generation failed, using provided state roots");
+        } else {
+          // Load generated witness to get real state roots
+          const witnessData = JSON.parse(fs.readFileSync(witnessPath, "utf8")) as { state_root_before?: string; state_root_after?: string };
+          if (witnessData.state_root_before && witnessData.state_root_after) {
+            // Update artifact with real state roots from witness
+            srb = normalizeHex32(witnessData.state_root_before);
+            sra = normalizeHex32(witnessData.state_root_after);
+          }
+        }
+      }
+      
+      // Step 2: Generate STARK proof using witness-derived state roots
       const proofPath = path.join(dir, `${artifactId}.proof.json`);
-      const r = spawnSync("prover", ["stark-prove", "--start", String(artifact.start_slot), "--end", String(artifact.end_slot), "--out", proofPath], { stdio: "inherit" });
+      const r = spawnSync("prover", [
+        "stark-prove",
+        "--start", String(artifact.start_slot),
+        "--end", String(artifact.end_slot),
+        "--before", srb,
+        "--after", sra,
+        "--proof-hash", proofHashHex,
+        "--out", proofPath
+      ], { stdio: "inherit" });
       if (r.status !== 0) {
         return res.status(500).json({ error: { code: "StarkProveFailed", message: "prover stark-prove failed", details: null } });
       }
-      res.json({ artifact_id: artifactId, proof_hash: proofHashHex, stark_proof_file: proofPath });
+      res.json({ artifact_id: artifactId, proof_hash: proofHashHex, stark_proof_file: proofPath, witness_file: witnessPath });
       return;
     } catch (e) {
       return res.status(500).json({ error: { code: "StarkProveException", message: String(e), details: null } });
@@ -253,103 +298,216 @@ app.post("/artifact", async (req: Request, res: Response) => {
 
 // POST /anchor: build DS and submit (stub)
 app.post("/anchor", async (req: Request, res: Response) => {
-  const { artifact_id } = (req.body || {}) as { artifact_id?: string };
-  if (!artifact_id) {
-    return res.status(400).json({ error: { code: "BadRequest", message: "artifact_id required", details: null } });
-  }
-  let artifact = artifacts.get(artifact_id);
-  if (!artifact) {
-    // attempt to load from disk
-    const loaded = await loadArtifactFromDisk(artifact_id);
-    if (!loaded) return res.status(404).json({ error: { code: "NotFound", message: "artifact not found", details: null } });
-    artifact = loaded;
-    artifacts.set(artifact_id, artifact);
-  }
-  // Recompute proof_hash from minimal canonical fields (deterministic)
-  const minimal = canonicalize({
-    start_slot: artifact.start_slot,
-    end_slot: artifact.end_slot,
-    state_root_before: normalizeHex32(String(artifact.state_root_before || "")),
-    state_root_after: normalizeHex32(String(artifact.state_root_after || "")),
-  });
-  const proofHash = blake3hash(Buffer.from(minimal, "utf8"));
-  // If STARK verification is required, verify sidecar proof file before proceeding
-  if (isStarkRequired()) {
-    try {
-      const now = new Date();
-      const y = String(now.getUTCFullYear());
-      const m = String(now.getUTCMonth() + 1).padStart(2, "0");
-      const d = String(now.getUTCDate()).padStart(2, "0");
-      const dir = path.join(ARTIFACT_DIR, y, m, d);
-      const proofPath = path.join(dir, `${artifact_id}.proof.json`);
-      await fsp.access(proofPath).catch(() => { throw new Error("missing sidecar STARK proof file") });
-      const r = spawnSync("prover", ["stark-verify", "--proof", proofPath], { stdio: "inherit" });
-      if (r.status !== 0) {
-        return res.status(400).json({ error: { code: "StarkVerifyFailed", message: "STARK proof verification failed", details: null } });
-      }
-    } catch (e) {
-      return res.status(400).json({ error: { code: "StarkVerifyException", message: String(e), details: null } });
+  await (async () => {
+    const { artifact_id } = (req.body || {}) as { artifact_id?: string };
+    if (!artifact_id) {
+      return res.status(400).json({ error: { code: "BadRequest", message: "artifact_id required", details: null } });
     }
-  }
-  const web3 = await import("@solana/web3.js");
-  // Read aggregator state and compute next seq
-  const seq = (await fetchLastSeq(PROGRAM_ID, RPC_URL)) + 1n;
-  const startSlot = BigInt(artifact.start_slot ?? 1);
-  const endSlot = BigInt(artifact.end_slot ?? 1);
-  // Fetch on-chain config and enforce CHAIN_ID match
-  const cfg = await fetchConfig(PROGRAM_ID, RPC_URL);
-  if (cfg.chain_id !== CHAIN_ID) {
-    return res.status(400).json({ error: { code: "ChainIdMismatch", message: `env CHAIN_ID=${CHAIN_ID} != on-chain ${cfg.chain_id}`, details: null } });
-  }
-  // Determine allowed aggregator pubkey for seq per activation_seq
-  const allowedAgg = seq >= cfg.activation_seq ? cfg.next_aggregator_pubkey : cfg.aggregator_pubkey;
-  const { ds, dsHash } = buildDS({
-    chainId: CHAIN_ID,
-    programId: new web3.PublicKey(PROGRAM_ID).toBytes(),
-    proofHash,
-    startSlot,
-    endSlot,
-    seq,
-  });
-  const secretKey = loadAggregatorSecret();
-  const aggKeypair = nacl.sign.keyPair.fromSecretKey(secretKey);
-  const aggPub = new Uint8Array(aggKeypair.publicKey);
-  if (!bytesEq(aggPub, allowedAgg)) {
-    return res.status(400).json({ error: { code: "AggregatorKeyMismatch", message: "aggregator secret does not match allowed aggregator_pubkey", details: null } });
-  }
-  const signature = nacl.sign.detached(ds, secretKey);
-  const aggregator_signature = Buffer.from(signature).toString("hex");
-  const ds_hash = Buffer.from(dsHash).toString("hex");
-  try {
-    // Prepare real args per spec
-    const artifact_id_bytes = uuidToBytes(String(artifact.artifact_id || "")) || uuidToBytes(randomUuidV4());
-    const state_root_before = hexTo32(normalizeHex32(String(artifact.state_root_before || "")));
-    const state_root_after = hexTo32(normalizeHex32(String(artifact.state_root_after || "")));
-    const timestamp = BigInt(Math.floor(Date.now() / 1000));
-    const txid = await submitAnchorProof({
-      rpcUrl: RPC_URL,
-      programIdStr: PROGRAM_ID,
-      ds,
-      dsHash,
+    let artifact = artifacts.get(artifact_id);
+    if (!artifact) {
+      // attempt to load from disk
+      const loaded = await loadArtifactFromDisk(artifact_id);
+      if (!loaded) return res.status(404).json({ error: { code: "NotFound", message: "artifact not found", details: null } });
+      artifact = loaded;
+      artifacts.set(artifact_id, artifact);
+    }
+    // Recompute proof_hash from minimal canonical fields (deterministic)
+    const minimal = canonicalize({
+      start_slot: artifact.start_slot,
+      end_slot: artifact.end_slot,
+      state_root_before: normalizeHex32(String(artifact.state_root_before || "")),
+      state_root_after: normalizeHex32(String(artifact.state_root_after || "")),
+    });
+    const proofHash = blake3hash(Buffer.from(minimal, "utf8"));
+    if (LOCAL_MODE) {
+      const web3 = await import("@solana/web3.js");
+      localSeq = localSeq + 1n;
+      const seq = localSeq;
+      const startSlot = BigInt(artifact.start_slot ?? 1);
+      const endSlot = BigInt(artifact.end_slot ?? 1);
+      const { ds, dsHash } = buildDS({
+        chainId: CHAIN_ID,
+        programId: new web3.PublicKey(PROGRAM_ID).toBytes(),
+        proofHash,
+        startSlot,
+        endSlot,
+        seq,
+      });
+      const secretKey = loadAggregatorSecret();
+      const signature = nacl.sign.detached(ds, secretKey);
+      const ds_hash = Buffer.from(dsHash).toString("hex");
+      const aggregator_signature = Buffer.from(signature).toString("hex");
+      return res.json({ aggregator_signature, ds_hash, transaction_id: `LOCAL-${Buffer.from(dsHash).toString("hex").slice(0, 16)}`, seq: Number(seq) });
+    }
+    // If STARK verification is required (Testnet/v2), verify sidecar proof file before proceeding
+    let starkPiHash32: Buffer | null = null;
+    let starkProofHash32: Buffer | null = null;
+    if (isStarkRequired() || shouldUseV2()) {
+      try {
+        const proofPath = await findFileRecursive(ARTIFACT_DIR, `${artifact_id}.proof.json`, 4);
+        if (!proofPath) throw new Error("missing sidecar STARK proof file");
+        const r = spawnSync("prover", ["stark-verify", "--proof", proofPath], { stdio: "inherit" });
+        if (r.status !== 0) {
+          return res.status(400).json({ error: { code: "StarkVerifyFailed", message: "STARK proof verification failed", details: null } });
+        }
+        // Compute STARK hashes per Operation-Ghost-Ship §6.2
+        const proofRaw = await fsp.readFile(proofPath, { encoding: "utf8" });
+        const proofObj = JSON.parse(proofRaw) as { public_inputs?: unknown; proof_b64?: string };
+        const proofBytes = Buffer.from(String(proofObj.proof_b64 || ""), "base64");
+        const { dsHash } = buildDS({
+          chainId: CHAIN_ID,
+          programId: new (await import("@solana/web3.js")).PublicKey(PROGRAM_ID).toBytes(),
+          proofHash,
+          startSlot: BigInt(artifact.start_slot ?? 1),
+          endSlot: BigInt(artifact.end_slot ?? 1),
+          seq: (await fetchLastSeq(PROGRAM_ID, RPC_URL)) + 1n,
+        });
+        // Prefer North Star Route PI set if present in sidecar
+        // Expected fields: c_in_hex, c_out_hex, h_b_hex, s_in (array), s_out (array)
+        const pi = (proofObj as any).public_inputs as any;
+        let piCanonical: string;
+        if (pi && (pi.c_in_hex || pi.c_out_hex || pi.h_b_hex || pi.S_in || pi.S_out || pi.s_in || pi.s_out)) {
+          const S_in = Array.isArray(pi.s_in ?? pi.S_in) ? (pi.s_in ?? pi.S_in).map((kv: any) => ({
+            account: String(kv.account ?? ""),
+            value: String(kv.value ?? ""),
+          })) : [];
+          const S_out = Array.isArray(pi.s_out ?? pi.S_out) ? (pi.s_out ?? pi.S_out).map((kv: any) => ({
+            account: String(kv.account ?? ""),
+            value: String(kv.value ?? ""),
+          })) : [];
+          const PI_payload = {
+            C_in: String(pi.c_in_hex ?? pi.C_in ?? ""),
+            C_out: String(pi.c_out_hex ?? pi.C_out ?? ""),
+            H_B: String(pi.h_b_hex ?? pi.H_B ?? ""),
+            S_in,
+            S_out,
+          };
+          piCanonical = canonicalize(PI_payload);
+        } else {
+          // Backward-compatible minimal PI (binds DS as well)
+          piCanonical = canonicalize({
+            start_slot: artifact.start_slot,
+            end_slot: artifact.end_slot,
+            state_root_before: normalizeHex32(String(artifact.state_root_before || "")),
+            state_root_after: normalizeHex32(String(artifact.state_root_after || "")),
+            proof_hash: Buffer.from(proofHash).toString("hex"),
+            ds_hash: Buffer.from(dsHash).toString("hex"),
+          });
+        }
+        // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
+        const blake3 = await import("blake3");
+        starkPiHash32 = Buffer.from(blake3.hash(Buffer.from(piCanonical, "utf8")));
+        starkProofHash32 = Buffer.from(blake3.hash(proofBytes));
+      } catch (e) {
+        return res.status(400).json({ error: { code: "StarkVerifyException", message: String(e), details: null } });
+      }
+    }
+    const web3 = await import("@solana/web3.js");
+    // Read aggregator state and compute next seq
+    let lastSeq: bigint;
+    try {
+      lastSeq = await fetchLastSeq(PROGRAM_ID, RPC_URL);
+    } catch (e) {
+      return res.status(500).json({ error: { code: "FetchLastSeqFailed", message: String(e), details: null } });
+    }
+    const seq = lastSeq + 1n;
+    const startSlot = BigInt(artifact.start_slot ?? 1);
+    const endSlot = BigInt(artifact.end_slot ?? 1);
+    // Fetch on-chain config and enforce CHAIN_ID match
+    let cfg: { aggregator_pubkey: Uint8Array; next_aggregator_pubkey: Uint8Array; activation_seq: bigint; chain_id: bigint; };
+    try {
+      cfg = await fetchConfig(PROGRAM_ID, RPC_URL);
+    } catch (e) {
+      return res.status(400).json({ error: { code: "ConfigNotFound", message: String(e), details: null } });
+    }
+    if (cfg.chain_id !== CHAIN_ID) {
+      return res.status(400).json({ error: { code: "ChainIdMismatch", message: `env CHAIN_ID=${CHAIN_ID} != on-chain ${cfg.chain_id}`, details: null } });
+    }
+    // Determine allowed aggregator pubkey for seq per activation_seq
+    const allowedAgg = seq >= cfg.activation_seq ? cfg.next_aggregator_pubkey : cfg.aggregator_pubkey;
+    const { ds, dsHash } = buildDS({
+      chainId: CHAIN_ID,
+      programId: new web3.PublicKey(PROGRAM_ID).toBytes(),
       proofHash,
       startSlot,
       endSlot,
       seq,
-      aggregatorSecretKey: secretKey,
-      aggregatorPubkey: allowedAgg,
-      artifactId: artifact_id_bytes,
-      artifactLen: Number(artifact.artifact_len || 0),
-      stateRootBefore: state_root_before,
-      stateRootAfter: state_root_after,
-      timestamp,
     });
-    res.json({ aggregator_signature, ds_hash, transaction_id: txid });
-  } catch (e) {
+    // Sign DS: HSM required on Testnet (CHAIN_ID=102)
+    let signature: Uint8Array;
+    if (shouldUseV2()) {
+      if (!AGGREGATOR_HSM_URI) {
+        return res.status(400).json({ error: { code: "HsmRequired", message: "AGGREGATOR_HSM_URI must be set on Testnet (v2)", details: null } });
+      }
+      signature = await signWithHsmEd25519(AGGREGATOR_HSM_URI, ds);
+    } else {
+      const secretKey = loadAggregatorSecret();
+      signature = nacl.sign.detached(ds, secretKey);
+      const aggKeypair = nacl.sign.keyPair.fromSecretKey(secretKey);
+      const aggPub = new Uint8Array(aggKeypair.publicKey);
+      if (!bytesEq(aggPub, allowedAgg)) {
+        return res.status(400).json({ error: { code: "AggregatorKeyMismatch", message: "aggregator secret does not match allowed aggregator_pubkey", details: null } });
+      }
+    }
+    const aggregator_signature = Buffer.from(signature).toString("hex");
+    const ds_hash = Buffer.from(dsHash).toString("hex");
+    try {
+      // Prepare real args per spec
+      const artifact_id_bytes = uuidToBytes(String(artifact.artifact_id || "")) || uuidToBytes(randomUuidV4());
+      const state_root_before = hexTo32(normalizeHex32(String(artifact.state_root_before || "")));
+      const state_root_after = hexTo32(normalizeHex32(String(artifact.state_root_after || "")));
+      const timestamp = BigInt(Math.floor(Date.now() / 1000));
+      const txid = shouldUseV2()
+        ? await submitAnchorProofV2({
+            rpcUrl: RPC_URL,
+            programIdStr: PROGRAM_ID,
+            ed25519Signature: signature,
+            aggregatorPubkey: allowedAgg,
+            ds,
+            dsHash,
+            proofHash,
+            startSlot,
+            endSlot,
+            seq,
+            artifactId: artifact_id_bytes,
+            artifactLen: Number(artifact.artifact_len || 0),
+            stateRootBefore: state_root_before,
+            stateRootAfter: state_root_after,
+            timestamp,
+            starkPiHash32: starkPiHash32 ?? Buffer.alloc(32, 0),
+            starkProofHash32: starkProofHash32 ?? Buffer.alloc(32, 0),
+          })
+        : await submitAnchorProofV1({
+            rpcUrl: RPC_URL,
+            programIdStr: PROGRAM_ID,
+            ds,
+            dsHash,
+            proofHash,
+            startSlot,
+            endSlot,
+            seq,
+            aggregatorSecretKey: loadAggregatorSecret(),
+            aggregatorPubkey: allowedAgg,
+            artifactId: artifact_id_bytes,
+            artifactLen: Number(artifact.artifact_len || 0),
+            stateRootBefore: state_root_before,
+            stateRootAfter: state_root_after,
+            timestamp,
+          });
+      res.json({ aggregator_signature, ds_hash, transaction_id: txid });
+    } catch (e) {
+      // eslint-disable-next-line no-console
+      console.error("/anchor failed:", e);
+      const mapped = mapProgramError(e);
+      res.status(mapped.http).json({ error: { code: mapped.code, message: mapped.message, details: mapped.details } });
+    }
+  })().catch((e) => {
     // eslint-disable-next-line no-console
-    console.error("/anchor failed:", e);
-    const mapped = mapProgramError(e);
-    res.status(mapped.http).json({ error: { code: mapped.code, message: mapped.message, details: mapped.details } });
-  }
+    console.error("Unhandled /anchor error:", e);
+    if (!(res as any).headersSent) {
+      res.status(500).json({ error: { code: "Unhandled", message: String(e), details: null } });
+    }
+  });
 });
 
 // GET endpoints per Complete_Architecture.md
@@ -357,6 +515,10 @@ app.get("/proof/:artifact_id", async (req: Request, res: Response) => {
   const params = req.params;
   const id = String(params.artifact_id ?? "");
   const art = artifacts.get(id);
+  if (LOCAL_MODE) {
+    if (!art) return res.status(404).json({ error: { code: "NotFound", message: "artifact not found", details: null } });
+    return res.json({ artifact: art, status: null });
+  }
   const pg = new PgClient({ connectionString: DATABASE_URL });
   await pg.connect();
   const row = await pg.query("SELECT * FROM proofs WHERE artifact_id = $1 ORDER BY ts DESC LIMIT 1", [id]);
@@ -388,7 +550,7 @@ if (!process.env.VITEST && process.env.NODE_ENV !== "test") {
 export { app };
 
 // ============== Solana TX submission (Ed25519 preflight + ComputeBudget) ==============
-async function submitAnchorProof(params: {
+async function submitAnchorProofV1(params: {
   rpcUrl: string;
   programIdStr: string;
   ds: Uint8Array;
@@ -519,6 +681,93 @@ async function submitAnchorProof(params: {
   tx.add(ed25519Ix);
   tx.add(ix);
 
+  const latest = await connection.getLatestBlockhash();
+  tx.recentBlockhash = latest.blockhash;
+  tx.feePayer = payer.publicKey;
+  tx.sign(payer);
+  const sig = await web3.sendAndConfirmTransaction(connection, tx, [payer]);
+  return sig;
+}
+
+async function submitAnchorProofV2(params: {
+  rpcUrl: string;
+  programIdStr: string;
+  ed25519Signature: Uint8Array;
+  aggregatorPubkey: Uint8Array;
+  ds: Uint8Array;
+  dsHash: Uint8Array;
+  proofHash: Uint8Array;
+  startSlot: bigint;
+  endSlot: bigint;
+  seq: bigint;
+  artifactId: Uint8Array;
+  artifactLen: number;
+  stateRootBefore: Uint8Array;
+  stateRootAfter: Uint8Array;
+  timestamp: bigint;
+  starkPiHash32: Buffer;
+  starkProofHash32: Buffer;
+}): Promise<string> {
+  const web3 = await import("@solana/web3.js");
+  const connection = new web3.Connection(params.rpcUrl, {
+    commitment: (process.env.MIN_FINALITY_COMMITMENT as Commitment) || "finalized",
+  });
+  const feePayerPath = process.env.FEE_PAYER_KEYPAIR_PATH
+    || (process.env.USERPROFILE ? path.join(process.env.USERPROFILE, ".config", "solana", "id.json") : undefined)
+    || "./keys/sol_agg.json";
+  const raw = fs.readFileSync(feePayerPath, { encoding: "utf8" });
+  const arr = JSON.parse(raw) as number[];
+  const payer = web3.Keypair.fromSecretKey(Uint8Array.from(arr));
+  const ComputeBudgetProgram = (web3 as any).ComputeBudgetProgram;
+  const computeIx = ComputeBudgetProgram.setComputeUnitLimit({ units: 200_000 }) as typeof web3.TransactionInstruction.prototype;
+  const ed25519Ix = web3.Ed25519Program.createInstructionWithPublicKey({
+    publicKey: Buffer.from(params.aggregatorPubkey),
+    message: Buffer.from(params.ds),
+    signature: Buffer.from(params.ed25519Signature),
+  });
+  const proofHash32 = Buffer.from(params.proofHash);
+  const dsHash32 = Buffer.from(params.dsHash);
+  const startLe = u64le(params.startSlot);
+  const endLe = u64le(params.endSlot);
+  const seqLe = u64le(params.seq);
+  const data = encodeAnchorProofV2ArgsBorsh({
+    artifactId: params.artifactId,
+    proofHash32,
+    seqLe,
+    startLe,
+    endLe,
+    artifactLen: params.artifactLen,
+    stateRootBefore: params.stateRootBefore,
+    stateRootAfter: params.stateRootAfter,
+    aggregatorPubkey: params.aggregatorPubkey,
+    timestampLe: i64le(params.timestamp),
+    dsHash32,
+    starkPiHash32: params.starkPiHash32,
+    starkProofHash32: params.starkProofHash32,
+  });
+  const programId = new web3.PublicKey(params.programIdStr);
+  const configPda = web3.PublicKey.findProgramAddressSync([Buffer.from("zksl"), Buffer.from("config")], programId)[0];
+  const aggregatorStatePda = web3.PublicKey.findProgramAddressSync([Buffer.from("zksl"), Buffer.from("aggregator")], programId)[0];
+  const rangeStatePda = web3.PublicKey.findProgramAddressSync([Buffer.from("zksl"), Buffer.from("range")], programId)[0];
+  const proofRecordPda = web3.PublicKey.findProgramAddressSync(
+    [Buffer.from("zksl"), Buffer.from("proof2"), proofHash32, seqLe],
+    programId,
+  )[0];
+  const SYSVAR_INSTRUCTIONS_PUBKEY = (web3 as any).SYSVAR_INSTRUCTIONS_PUBKEY as typeof web3.PublicKey.prototype;
+  const keys = [
+    { pubkey: payer.publicKey, isSigner: true, isWritable: true },
+    { pubkey: configPda, isSigner: false, isWritable: true },
+    { pubkey: aggregatorStatePda, isSigner: false, isWritable: true },
+    { pubkey: rangeStatePda, isSigner: false, isWritable: true },
+    { pubkey: proofRecordPda, isSigner: false, isWritable: true },
+    { pubkey: SYSVAR_INSTRUCTIONS_PUBKEY, isSigner: false, isWritable: false },
+    { pubkey: web3.SystemProgram.programId, isSigner: false, isWritable: false },
+  ];
+  const ix = new web3.TransactionInstruction({ keys, programId, data });
+  const tx = new web3.Transaction();
+  tx.add(computeIx);
+  tx.add(ed25519Ix);
+  tx.add(ix);
   const latest = await connection.getLatestBlockhash();
   tx.recentBlockhash = latest.blockhash;
   tx.feePayer = payer.publicKey;
