@@ -566,18 +566,9 @@ pub fn generate_stark_proof_from_witness(
     
     let before = witnesses.first().unwrap().state_root;
     let after = witnesses.last().unwrap().state_root;
-    // Compute North Star Route public inputs (C_in/C_out/H_B/S_in/S_out)
-    let c_in_hex = hex::encode(before);
-    let c_out_hex = hex::encode(after);
-    // H_B: fold all state_roots in the window deterministically
-    let mut hb = Blake3::new();
-    for w in &witnesses {
-        hb.update(&w.state_root);
-    }
-    let h_b_hex = hex::encode(*hb.finalize().as_bytes());
-    // S_in/S_out from first/last slot vote accounts using same hashing as Merkle leaf
-    let s_in = map_vote_set_to_kv(&witnesses.first().unwrap().vote_accounts);
-    let s_out = map_vote_set_to_kv(&witnesses.last().unwrap().vote_accounts);
+    // Compute North Star Route public inputs (C_in/C_out/H_B/S_in/S_out) from REAL block data
+    let (c_in_hex, c_out_hex, h_b_hex, s_in, s_out) =
+        witness::generate_north_star_public_inputs(rpc_url, start, end, &witnesses)?;
     
     let pub_inputs = PublicInputs {
         start,
@@ -637,6 +628,7 @@ pub fn verify_stark_proof(stark: &StarkOutput) -> Result<()> {
 }
 
 // Legacy functions for backward compatibility (generate simple proofs for testing)
+#[allow(dead_code)]
 pub fn generate_stark_proof(
     _start: u64,
     _end: u64,
@@ -647,6 +639,7 @@ pub fn generate_stark_proof(
     anyhow::bail!("Use generate_stark_proof_from_witness for real proofs")
 }
 
+#[allow(dead_code)]
 fn map_vote_set_to_kv(list: &[crate::witness::VoteAccountWitness]) -> Vec<KVPair> {
     list.iter()
         .map(|v| {
