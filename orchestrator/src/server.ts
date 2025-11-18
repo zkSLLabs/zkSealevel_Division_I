@@ -12,6 +12,7 @@ import { encodeAnchorProofArgsBorsh, encodeAnchorProofV2ArgsBorsh, i64le, u64le,
 import { mapProgramError } from "./errors.js";
 import { fetchConfig, fetchLastSeq } from "./onchain.js";
 import { spawnSync } from "child_process";
+import os from "os";
 import type { Commitment } from "@solana/web3.js";
 import { signWithHsmEd25519 } from "./hsm.js";
 
@@ -29,6 +30,10 @@ const ARTIFACT_DIR = process.env.ARTIFACT_DIR || "./orchestrator/data/artifacts"
 const DATABASE_URL = process.env.DATABASE_URL || "postgres://postgres:postgres@localhost:5432/zksl";
 const AGGREGATOR_HSM_URI = process.env.AGGREGATOR_HSM_URI || "";
 const LOCAL_MODE = (process.env.LOCAL_MODE || "0") === "1";
+const PROVER_BIN = process.env.PROVER_BIN
+  || (process.platform === "win32"
+      ? path.join(process.cwd(), "prover", "target", "release", "prover.exe")
+      : "prover");
 
 function isStarkRequired(): boolean {
   return (process.env.REQUIRE_STARK ?? "1") !== "0";
@@ -188,7 +193,7 @@ app.post("/prove", async (req: Request, res: Response) => {
       
       // Check if witness already exists, else generate
       if (!fs.existsSync(witnessPath)) {
-        const witnessRes = spawnSync("prover", [
+        const witnessRes = spawnSync(PROVER_BIN, [
           "generate-witness",
           "--rpc", rpcUrl,
           "--start", String(artifact.start_slot),
@@ -212,7 +217,7 @@ app.post("/prove", async (req: Request, res: Response) => {
       
       // Step 2: Generate STARK proof using witness-derived state roots
       const proofPath = path.join(dir, `${artifactId}.proof.json`);
-      const r = spawnSync("prover", [
+      const r = spawnSync(PROVER_BIN, [
         "stark-prove",
         "--start", String(artifact.start_slot),
         "--end", String(artifact.end_slot),
@@ -346,7 +351,7 @@ app.post("/anchor", async (req: Request, res: Response) => {
       try {
         const proofPath = await findFileRecursive(ARTIFACT_DIR, `${artifact_id}.proof.json`, 4);
         if (!proofPath) throw new Error("missing sidecar STARK proof file");
-        const r = spawnSync("prover", ["stark-verify", "--proof", proofPath], { stdio: "inherit" });
+        const r = spawnSync(PROVER_BIN, ["stark-verify", "--proof", proofPath], { stdio: "inherit" });
         if (r.status !== 0) {
           return res.status(400).json({ error: { code: "StarkVerifyFailed", message: "STARK proof verification failed", details: null } });
         }
@@ -436,10 +441,21 @@ app.post("/anchor", async (req: Request, res: Response) => {
     // Sign DS: HSM required on Testnet (CHAIN_ID=102)
     let signature: Uint8Array;
     if (shouldUseV2()) {
-      if (!AGGREGATOR_HSM_URI) {
-        return res.status(400).json({ error: { code: "HsmRequired", message: "AGGREGATOR_HSM_URI must be set on Testnet (v2)", details: null } });
+      // On Testnet (CHAIN_ID=102) require HSM. On Devnet (103) allow local secret for v2.
+      if (CHAIN_ID === 102n) {
+        if (!AGGREGATOR_HSM_URI) {
+          return res.status(400).json({ error: { code: "HsmRequired", message: "AGGREGATOR_HSM_URI must be set on Testnet (v2)", details: null } });
+        }
+        signature = await signWithHsmEd25519(AGGREGATOR_HSM_URI, ds);
+      } else {
+        const secretKey = loadAggregatorSecret();
+        signature = nacl.sign.detached(ds, secretKey);
+        const aggKeypair = nacl.sign.keyPair.fromSecretKey(secretKey);
+        const aggPub = new Uint8Array(aggKeypair.publicKey);
+        if (!bytesEq(aggPub, allowedAgg)) {
+          return res.status(400).json({ error: { code: "AggregatorKeyMismatch", message: "aggregator secret does not match allowed aggregator_pubkey", details: null } });
+        }
       }
-      signature = await signWithHsmEd25519(AGGREGATOR_HSM_URI, ds);
     } else {
       const secretKey = loadAggregatorSecret();
       signature = nacl.sign.detached(ds, secretKey);
