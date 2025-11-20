@@ -66,9 +66,14 @@ jobs:
           echo "$HOME/.cargo/bin" >> $GITHUB_PATH
           anchor --version
 
-      - name: Anchor build
+      - name: Build SBF (no IDL)
         run: |
-          anchor build
+          set -euxo pipefail
+          solana --version
+          rustup show
+          cargo --version
+          # Build SBF directly to avoid IDL toolchain feature conflicts
+          cargo build-sbf --manifest-path programs/validator_lock/Cargo.toml --sbf-out-dir target/deploy
 
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
