@@ -219,6 +219,39 @@ async function main() {
       console.log(JSON.stringify({ txid: sig }, null, 2));
     });
 
+  // Initialize aggregator/range PDAs (init_state)
+  program.command("init-state")
+    .requiredOption("--keypair <PATH>")
+    .action(async (opts) => {
+      const web3 = await import("@solana/web3.js");
+      const programIdStr = process.env.PROGRAM_ID_VALIDATOR_LOCK || "";
+      if (!programIdStr) throw new Error("PROGRAM_ID_VALIDATOR_LOCK is required");
+      const conn = new web3.Connection(process.env.RPC_URL || "https://api.devnet.solana.com", { commitment: process.env.MIN_FINALITY_COMMITMENT || "finalized" });
+      const programId = new web3.PublicKey(programIdStr);
+      const payer = await readKeypair(opts.keypair);
+
+      const [aggregatorStatePda] = await web3.PublicKey.findProgramAddress([Buffer.from("zksl"), Buffer.from("aggregator")], programId);
+      const [rangeStatePda] = await web3.PublicKey.findProgramAddress([Buffer.from("zksl"), Buffer.from("range")], programId);
+      const disc = sha256_8("global:init_state");
+      const data = disc; // no args
+      const keys = [
+        { pubkey: payer.publicKey, isSigner: true, isWritable: true },              // payer
+        { pubkey: aggregatorStatePda, isSigner: false, isWritable: true },          // aggregator_state (init)
+        { pubkey: rangeStatePda, isSigner: false, isWritable: true },               // range_state (init)
+        { pubkey: (web3 as any).SystemProgram.programId, isSigner: false, isWritable: false }, // system_program
+      ];
+      const ix = new web3.TransactionInstruction({ keys, programId, data });
+      const tx = new web3.Transaction();
+      tx.add(ix);
+      const bh = await conn.getLatestBlockhash();
+      tx.recentBlockhash = bh.blockhash;
+      tx.feePayer = payer.publicKey;
+      tx.sign(payer);
+      const sig = await web3.sendAndConfirmTransaction(conn, tx, [payer], { commitment: process.env.MIN_FINALITY_COMMITMENT || "finalized" });
+      // eslint-disable-next-line no-console
+      console.log(JSON.stringify({ txid: sig }, null, 2));
+    });
+
   program.command("update-config")
     .requiredOption("--keypair <PATH>")
     .requiredOption("--agg-key <PATH>")
