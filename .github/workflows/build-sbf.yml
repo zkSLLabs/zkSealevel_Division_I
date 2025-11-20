@@ -30,10 +30,30 @@ jobs:
             ~/.cache/solana
           key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
 
-      - name: Install Solana CLI
+      - name: Install Solana CLI (with retry + fallback)
         run: |
-          sh -c "$(curl -sSfL https://release.solana.com/${SOLANA_VERSION}/install)"
-          echo "$HOME/.local/share/solana/install/active_release/bin" >> $GITHUB_PATH
+          set -euxo pipefail
+          # Try official installer (release.solana.com) with retries
+          INSTALL_URL="https://release.solana.com/${SOLANA_VERSION}/install"
+          for attempt in 1 2 3; do
+            if curl -fsSL "$INSTALL_URL" | sh -s -; then
+              break
+            fi
+            echo "Solana installer attempt $attempt failed; retrying..."
+            sleep 2
+          done
+
+          if [ -x "$HOME/.local/share/solana/install/active_release/bin/solana" ]; then
+            echo "$HOME/.local/share/solana/install/active_release/bin" >> $GITHUB_PATH
+          else
+            echo "Falling back to GitHub release tarball for Solana CLI..."
+            TARBALL_URL="https://github.com/solana-labs/solana/releases/download/${SOLANA_VERSION}/solana-release-x86_64-unknown-linux-gnu.tar.bz2"
+            curl -fsSL "$TARBALL_URL" -o /tmp/solana.tar.bz2
+            mkdir -p "$HOME/.local/share/solana/install"
+            tar -xjf /tmp/solana.tar.bz2 -C "$HOME/.local/share/solana/install"
+            echo "$HOME/.local/share/solana/install/solana-release/bin" >> $GITHUB_PATH
+          fi
+
           solana --version
 
       - name: Install Anchor CLI
