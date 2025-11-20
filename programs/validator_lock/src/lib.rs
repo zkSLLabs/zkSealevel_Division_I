@@ -38,7 +38,7 @@ const COMPUTE_BUDGET_ID: Pubkey = Pubkey::new_from_array([
     0x2c, 0x43, 0x9b, 0x3a, 0x40, 0x00, 0x00, 0x00,
 ]);
 
-declare_id!("DaQazqHA3wG4XWYv5cLYr5jLYNXRAgrVKDCjLwZ2Btfm");
+declare_id!("An2hAmTZXjCLeqBp8HmAMVn25JA4168nR3HUdqmpu6oJ");
 
 /// Program entrypoint module for validator_lock per Master_Blueprint.md
 #[cfg(not(feature = "skip-anchor-program"))]
