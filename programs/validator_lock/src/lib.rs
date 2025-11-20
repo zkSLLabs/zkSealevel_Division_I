@@ -195,9 +195,7 @@ pub mod validator_lock {
         // range monotonic and bounds
         require!(end_slot >= start_slot, ErrorCode::MathOverflow);
         require!((end_slot - start_slot + 1) <= MAX_SLOTS_PER_ARTIFACT, ErrorCode::MathOverflow);
-        if ctx.accounts.range_state.last_end_slot == 0 {
-            require!(start_slot == 1, ErrorCode::RangeOverlap);
-        } else {
+        if ctx.accounts.range_state.last_end_slot != 0 {
             require!(start_slot == ctx.accounts.range_state.last_end_slot + 1, ErrorCode::RangeOverlap);
         }
 
