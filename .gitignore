@@ -100,3 +100,5 @@ Desktop.ini
 # =====================
 test-ledger/
 **/test-ledger/
+# Temp local airdrop key
+temp-airdrop-key.json
